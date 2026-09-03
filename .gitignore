@@ -1,0 +1,15 @@
+.DS_Store
+
+# Terraform
+infrastructure/.terraform/
+infrastructure/terraform.tfstate
+infrastructure/terraform.tfstate.*
+infrastructure/*.tfplan
+infrastructure/crash.log
+infrastructure/crash.*.log
+
+# Local secrets / generated credentials
+infrastructure/.env
+infrastructure/pingfederate.lic
+infrastructure/*-config
+infrastructure/terraform.tfvars

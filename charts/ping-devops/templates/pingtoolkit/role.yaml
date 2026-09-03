@@ -1,0 +1,4 @@
+{{- include "pinglib.rbac.role" (list . "pingtoolkit") -}}
+
+{{- define "pingtoolkit.rbac.role" -}}
+{{- end -}}

@@ -1,0 +1,18 @@
+{{- include "pinglib.env-vars" (list . "pingdirectory") -}}
+
+
+
+{{- define "pingdirectory.env-vars" -}}
+{{- $top := index . 0 -}}
+{{- $v := index . 1 -}}
+data:
+  ORCHESTRATION_TYPE: KUBERNETES
+  K8S_STATEFUL_SET_NAME: {{ include "pinglib.fullname" . }}
+  K8S_STATEFUL_SET_SERVICE_NAME: {{ include "pinglib.fullclusterservicename" . }}
+  LDAP_PORT: {{ $top.Values.pingdirectory.services.ldap.containerPort | quote }}
+  LDAPS_PORT: {{ $top.Values.pingdirectory.services.ldaps.containerPort | quote }}
+  HTTPS_PORT: {{ $top.Values.pingdirectory.services.https.containerPort | quote }}
+  {{- if eq $top.Values.pingdirectory.workload.statefulSet.podManagementPolicy "Parallel" }}
+  PARALLEL_POD_MANAGEMENT_POLICY: "true"
+  {{- end }}
+{{- end -}}

@@ -1,0 +1,1592 @@
+############################################################
+# Ping Identity DevOps values.yaml
+############################################################
+# The yaml is separated into 2 major sections:
+#  - global - Represents the base set of values that will
+#             be used for each product, if that product
+#             doesn't override the global values.
+#
+#  - image  - For every image/product, the values will
+#             be merged with the global settings, and
+#             take precedence.
+############################################################
+
+############################################################
+# @section Global values
+############################################################
+global:
+  ############################################################
+  # @param    global.annotations Annotations listed, will be
+  # @desc     added to all Kubernetes resources.
+  # @default  {}
+  ############################################################
+  annotations: {}
+
+  ############################################################
+  # @param    global.labels Labels listed, will be
+  # @desc     added to all Kubernetes resources.
+  # @default  {}
+  ############################################################
+  labels: {}
+
+  ############################################################
+  # @param    global.envs Environment variables listed will be
+  # @desc     added to the global-env-vars configmap
+  # @default  {}
+  #
+  # NOTE: Environment variables listed at the global: level
+  #       will actually end up being listed twice in the
+  #       configmaps (i.e. global-env-vars and product-env-vars)
+  ############################################################
+  envs: {}
+
+  ############################################################
+  # @param    global.addReleaseNameToResource Provides global ability
+  # @desc     to add names to kubernetes resources. One of `{none, append, prepend}`
+  # @default  prepend
+  #                      none: No use of Release.Name
+  #                    append: Appends the Release.Name
+  #                   prepend: Prepends the Release.Name ** DEFAULT **
+  ############################################################
+  addReleaseNameToResource: prepend
+
+  ############################################################
+  # Ingress
+  #
+  # @param    global.ingress.enabled
+  # @desc     If true, deploy Ingress resources.
+  # @default  false
+  #
+  # @param    global.ingress.addReleaseToHost Add release to host.
+  # @desc     One of `{prepend, append, subdomain, none}`
+  # @default  subdomain
+  #
+  # @param    global.ingress.defaultDomain Replaces with
+  # @desc     "_defaultDomain_" in host fields
+  # @default  example.com
+  #
+  # @param    global.ingress.defaultTlsSecret Replaces with
+  # @desc     "_defaultTlsSecret_" in tls.secretName
+  #
+  # @param    global.ingress.annotations
+  # @desc     Annotations to apply to Ingress resources.
+  # @default  {}
+  #
+  # @param    global.ingress.spec.ingressClassName
+  # @desc     IngressClassName used by the generated Ingress resources.
+  ############################################################
+  ingress:
+    enabled: false
+    addReleaseNameToHost: subdomain
+    defaultDomain: example.com
+    defaultTlsSecret:
+    annotations: {}
+#    nginx annotation example with spec classname
+#      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    spec: {}
+#      ingressClassName: nginx-public
+
+  ############################################################
+  # Gateway API (HTTPRoute/TCPRoute)
+  #
+  # @param    global.gateway.enabled
+  # @desc     If true, deploy Gateway API route resources.
+  # @default  false
+  #
+  # @param    global.gateway.apiVersion
+  # @desc     Deprecated HTTPRoute API version fallback. Use global.gateway.httpRouteApiVersion.
+  # @default  gateway.networking.k8s.io/v1
+  #
+  # @param    global.gateway.httpRouteApiVersion
+  # @desc     Gateway API version used for HTTPRoute resources.
+  # @default  gateway.networking.k8s.io/v1
+  #
+  # @param    global.gateway.tcpRouteApiVersion
+  # @desc     Gateway API version used for TCPRoute resources.
+  # @default  gateway.networking.k8s.io/v1alpha2
+  #
+  # @param    global.gateway.parentRefs Parent Gateway references
+  # @default  []
+  #
+  # @param    global.gateway.addReleaseNameToHost Add release to host.
+  # @desc     One of `{prepend, append, subdomain, none}`
+  # @default  subdomain
+  #
+  # @param    global.gateway.defaultDomain Replaces with
+  # @desc     "_defaultDomain_" in host fields
+  # @default  example.com
+  #
+  # @param    global.gateway.hosts Gateway route hosts/paths for HTTPRoute.
+  # @desc     pathType must be one of `{Exact, PathPrefix, RegularExpression}` and
+  # @desc     this can also be set per-product at {product}.gateway.hosts.
+  # @default  []
+  #
+  # @param    global.gateway.annotations
+  # @desc     Annotations to apply to Gateway API route resources.
+  # @default  {}
+  #
+  # @param    global.gateway.tcpRoutes Gateway listener bindings for TCPRoute.
+  # @desc     Each entry requires name, sectionName, and backend.serviceName. This can
+  # @desc     also be set per-product at {product}.gateway.tcpRoutes.
+  # @default  []
+  ############################################################
+  gateway:
+    enabled: false
+    apiVersion: gateway.networking.k8s.io/v1
+    httpRouteApiVersion: ""
+    tcpRouteApiVersion: ""
+    parentRefs: []
+    addReleaseNameToHost: subdomain
+    defaultDomain: example.com
+    hosts: []
+    annotations: {}
+    tcpRoutes: []
+
+  ############################################################
+  # Internal Certificates
+  #
+  # @param    global.privateCert.generate If true, then an internal certificate
+  # @desc     secret will be created along with mount of the certificate in
+  # @desc     /run/secrets/internal-cert (creates a tls.crt and tls.key).
+  # @desc     By default the Issuer of the cert will be the service name
+  # @desc     created by the Helm Chart.  Additionally, the ingress and gateway hosts,
+  # @desc     if enabled, will be added to the list of X509v3 Subject Alternative Name
+  # @default  false
+  #
+  # @param    global.privateCert.format The format of the certificate to be
+  # @desc     generated. Used "pingaccess-fips-pem" to generate a valid certificate
+  # @desc     for running PingAccess in FIPS mode. Any other value will generate a
+  # @desc     PKCS12 keystore with the generated certificate.
+  # @default  PKCS12
+  #
+  # @param global.privateCert.additionalHosts Additional hosts for the cert
+  # @default []
+  # @param global.privateCert.additionalIPs Additional IP addresses for the cert
+  # @default []
+  ############################################################
+  privateCert:
+    generate: false
+    format: "PKCS12"
+    additionalHosts: []
+    additionalIPs: []
+
+  ############################################################
+  # Master Password Generation
+  #
+  # @param    global.masterPassword Uses Helm function derivePassword,
+  # @desc     which uses the master password specification:
+  # @desc     https://masterpassword.app/masterpassword-algorithm.pdf
+  #
+  # @param    global.masterPassword.enabled Enable master password
+  # @default  false
+  #
+  # @param    global.masterPassword.strength Master password template. One of `{long, maximum}`
+  # @param    global.masterPassword.name Defaults to release name
+  # @param    global.masterPassword.site Defaults to chart name
+  # @param    global.masterPassword.secret Defaults to release namespace
+  #
+  #      masterPassword:
+  #        enabled: true
+  #        strength: long
+  #        name:   # default - .Release.Name
+  #        site:   # default - .Chart.Name
+  #        secret: # default - .Release.Namespace
+  ############################################################
+  masterPassword:
+    enabled: false
+
+  ############################################################
+  # @param    global.vault Hashicorp Vault configuration
+  #
+  # @param    global.vault.enabled Enable Vault
+  # @default  false
+  #
+  # @param    global.vault.hashicorp.annotations Annotation names, which will
+  # @desc     be appended to 'vault.hashicorp.com/' in the annotation.
+  # @desc     The vault.hashicorp.annotations.serviceAccountName value will
+  # @desc     be overwritten by the service account generated for the workload
+  # @desc     if there is one.
+  #
+  # @param    global.vault.secretPrefix Prefix that will be prepended to any
+  # @desc     secrets being injected.
+  # @default  ""
+  #
+  # https://www.vaultproject.io/docs/platform/k8s/injector/annotations
+  #
+  # @param    global.vault.secrets Vault secrets to pull in
+  # @default  {}
+  ############################################################
+  vault:
+    enabled: false
+    hashicorp:
+      annotations:
+        agent-inject: true
+        agent-init-first: true
+        agent-pre-populate-only: true
+        log-level: info
+        preserve-secret-case: true
+        role: k8s-default
+        secret-volume-path: /run/secrets
+        serviceAccountName: _defaultServiceAccountName_
+      secretPrefix: ""
+  #   secrets:
+  #     {secret-name}:
+  #       {secret-key | to-json}:
+  #         path: /opt/in/some/location/secrets
+  #         file: devops-secret.env
+
+  ############################################################
+  # @param    global.secretProviderClass.enabled Enable Secrets Store CSI Driver
+  # @desc     integration. When true, a CSI volume and volumeMount are
+  # @desc     auto-wired into the pod spec and utility sidecar.
+  # @default  false
+  #
+  # @param    global.secretProviderClass.create When true, a SecretProviderClass
+  # @desc     resource is rendered for each enabled product (requires the
+  # @desc     secrets-store.csi.x-k8s.io/v1 CRD to be pre-installed).
+  # @default  false
+  #
+  # @param    global.secretProviderClass.name Override the generated
+  # @desc     SecretProviderClass resource name. Defaults to
+  # @desc     <release>-<product>-spc when empty.
+  # @default  ""
+  #
+  # @param    global.secretProviderClass.provider CSI driver provider.
+  # @desc     One of: aws, azure, gcp, vault, akeyless, conjur, openbao
+  # @default  ""
+  #
+  # @param    global.secretProviderClass.parameters Provider-specific parameters
+  # @desc     passed through as raw YAML to spec.parameters.
+  # @default  {}
+  #
+  # @param    global.secretProviderClass.secretObjects Kubernetes Secret objects
+  # @desc     to sync from the CSI volume (opaque passthrough).
+  # @default  []
+  #
+  # @param    global.secretProviderClass.mountPath Mount path for the CSI volume
+  # @desc     inside containers.
+  # @default  /run/secrets
+  #
+  # @param    global.secretProviderClass.readOnly Whether the CSI volume mount
+  # @desc     is read-only.
+  # @default  true
+  ############################################################
+  secretProviderClass:
+    enabled: false
+    create: false
+    name: ""
+    provider: ""
+    parameters: {}
+    secretObjects: []
+    mountPath: /run/secrets
+    readOnly: true
+
+  ############################################################
+  # @param    global.imagePullSecrets Repository authentication using secret
+  # @desc     defined as a docker-registry secret in Kubernetes.
+  # @default  []
+  #
+  # https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+  ############################################################
+  imagePullSecrets: []
+  # - name: myregkeysecretname
+
+  ############################################################
+  # Image
+  #
+  # By default the images uses will be indicated by these
+  # variables.  An example might look like:
+  #
+  #   pingidentity/pingdataconsole:2607 (July 2026)
+  #
+  # @param    global.image.repository Default image registry
+  # @desc     is not the fully-qualified name of the image
+  # @desc     Example: image.repository: pingidentity, docker.io, 123.dkr.ecr.us-west-1.amazonaws.com
+  # @default  pingidentity
+  #
+  # @param    global.image.repositoryFqn Docker image repository fully-qualified name.
+  # @desc     Overrides image.repository and image.name on the pod image spec
+  # @desc     Example: image.repositoryFqn: pingidentity/pingfederate, docker.io/my-pingfederate
+  #
+  # @param    global.image.name Default image name
+  # @desc     MUST be set in child chart
+  # @desc     Example: image.name: pingfederate
+  #
+  # @param    global.image.tag Default image tag
+  # @default  2607
+  #
+  # @param    global.image.pullPolicy Default image pull policy
+  # @default  IfNotPresent
+  ############################################################
+  image:
+    repository: pingidentity
+    repositoryFqn:
+    name:
+    tag: "2607"
+    pullPolicy: IfNotPresent
+
+  ############################################################
+  # RBAC
+  #
+  # @param    global.rbac.generateServiceAccount
+  # @desc     Set to true to generate a service account for the workload.
+  # @default  false
+  #
+  # @param    global.rbac.serviceAccountName
+  # @desc     Name of the service account that will be generated. The default
+  # @desc     value of "_defaultServiceAccountName_" will result in a service
+  # @desc     account named based on the Helm installation and the specific
+  # @desc     workload being deployed. If generateServiceAccount and
+  # @desc     generateGlobalServiceAccount are false, this value can also refer
+  # @desc     to a service account created outside of Helm.
+  # @default  _defaultServiceAccountName_
+  #
+  # @param    global.rbac.generateRoleAndRoleBinding
+  # @desc     Set to true to generate a Role and RoleBinding corresponding
+  # @desc     to the workload service account.
+  # @default  false
+  #
+  # @param    global.rbac.generateGlobalServiceAccount
+  # @desc     Set to true to generate a service account for the entire installation.
+  # @desc     This global service account will be used for workloads that do not
+  # @desc     generate their own service account.
+  # @default  false
+  #
+  # @param    global.rbac.generateGlobalRoleAndRoleBinding
+  # @desc     Set to true to generate a Role and RoleBinding corresponding
+  # @desc     to the global service account for the entire installation.
+  # @default  false
+  #
+  # @param    global.rbac.applyServiceAccountToWorkload
+  # @desc     Set to true (the default) to apply to service account to the workload.
+  # @default  true
+  #
+  # @param    global.rbac.role
+  # @desc     This yaml will be directly inserted into the generated Role when
+  # @desc     generateRoleAndRoleBinding and/or generateGlobalRoleAndRoleBinding are true.
+  # @desc     The rules for the Role can be set here.
+  # @default  get, watch, and list verbs for the pods resource
+  #
+  # @param    global.rbac.serviceAccountAnnotations
+  # @desc     Any custom annotations to add to the service account.
+  #
+  # @param    global.rbac.roleAnnotations
+  # @desc     Any custom annotations to add to the role.
+  #
+  # @param    global.rbac.roleBindingAnnotations
+  # @desc     Any custom annotations to add to the role binding.
+  #
+  # @param    global.rbac.serviceAccountLabels
+  # @desc     Any custom labels to add to the service account.
+  #
+  # @param    global.rbac.roleLabels
+  # @desc     Any custom labels to add to the role.
+  #
+  # @param    global.rbac.roleBindingLabels
+  # @desc     Any custom labels to add to the role binding.
+  #
+  ############################################################
+  rbac:
+    generateServiceAccount: false
+    serviceAccountName: _defaultServiceAccountName_
+    generateRoleAndRoleBinding: false
+    applyServiceAccountToWorkload: true
+    generateGlobalServiceAccount: false
+    generateGlobalRoleAndRoleBinding: false
+    role:
+      rules:
+      - apiGroups: [""]
+        resources: ["pods"]
+        verbs: ["get", "watch", "list"]
+    serviceAccountAnnotations: {}
+    roleAnnotations: {}
+    roleBindingAnnotations: {}
+    serviceAccountLabels: {}
+    roleLabels: {}
+    roleBindingLabels: {}
+
+  ############################################################
+  # External Images (typically for initContainers)
+  #
+  # @param    global.externalImage Provides ability to use external images
+  # @desc     for various purposes such as using curl, waitfor, etc. A pingtoolkit
+  # @desc     image is included by default for running waitFor and generating
+  # @desc     private cert initContainers. A pingaccess image is also included by
+  # @desc     default to allow generating an encrypted PEM-formatted cert that is
+  # @desc     compatible with FIPS mode. Any values specified on the image
+  # @desc     will be copied directly to the k8s spec for the container, except
+  # @desc     for the externalImage.{name}.image section, which follows the
+  # @desc     format of the global.image section. If no image section is specified (the default),
+  # @desc     the corresponding value from the product values section will be used.
+  # @desc     For example, if externalImage.pingtoolkit.image is empty,
+  # @desc     the values from the top-level pingtoolkit.image section will be used.
+  # @default  {pingtoolkit, pingaccess}
+  ############################################################
+  externalImage:
+    pingtoolkit:
+      resources:
+        limits:
+          cpu: 500m
+          memory: 128Mi
+        requests:
+          cpu: 1m
+          memory: 64Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 9031
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+    pingaccess:
+      resources:
+        limits:
+          cpu: 2
+          memory: 4Gi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        runAsNonRoot: true
+        runAsUser: 9031
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+
+  ############################################################
+  # Services
+  #
+  # @param    global.services Services mapping a port to a targetPort on the
+  # @desc     corresponding container
+  # @default  {}
+  #
+  # @param    global.services.clusterExternalDNSHostname
+  # @desc     Value for the external-dns.alpha.kubernetes.io/hostname annotation
+  # @desc     for the cluster service.
+  # @default
+  #
+  # @param    global.services.clusterServiceName If set, then this name will
+  # @desc     be used as the cluster service name (i.e clusterService == true).
+  #
+  # @param    global.services.useLoadBalancerForDataService If true, the data service
+  # @desc     will be created with type: LoadBalancer.
+  # @default  false
+  #
+  # @param    global.services.serviceName.dataService If true, a ClusterIP service is
+  # @desc     created reachable within the cluster. A single IP is provided and the
+  # @desc     service will round-robin across the backend containers
+  #
+  # @param    global.services.serviceName.clusterService If true, a headless service is
+  # @desc     created, explicitly specifying "None" for the clusterIP.  DNS requests to
+  # @desc     this service will provide one of the IPs of the backend containers
+  #
+  # @param    global.services.serviceName.containerPort Port on the kubernetes container
+  #
+  # @param    global.services.serviceName.servicePort Port available from the kubernetes service.
+  # @desc     If clusterService=true this port on the cluster service is not really
+  # @desc     used, as the headless service always maps through to the container port
+  #
+  # @param    global.services.serviceName.ingressPort Port available from the kubernetes ingress
+  #
+  # @param    global.services.serviceName.gatewayPort Port available from the kubernetes gateway
+  #
+  # @param    global.services.annotations Any custom annotations to add to the service.
+  #
+  # @param    global.services.clusterServiceAnnotations Any custom annotations to add to the ClusterIP service.
+  #
+  # @param    global.services.labels Any custom labels to add to the service.
+  #
+  # @param    global.services.clusterServiceLabels Any custom labels to add to the ClusterIP service.
+  #
+  # https://kubernetes.io/docs/concepts/services-networking/service/
+  ############################################################
+  services: {}
+  #  admin:
+  #    containerPort: 9999
+  #    servicePort: 9999
+  #    ingressPort: 9999
+  #    gatewayPort: 9999
+  #    dataService: true
+  #  clusterbind:
+  #    containerPort: 7600
+  #    servicePort: 7600
+  #    clusterService: true
+  #  clusterfail:
+  #    containerPort: 7700
+  #    servicePort: 7700
+  #    clusterService: true
+  #  clusterExternalDNSHostname:
+  #  clusterServiceName:
+  #  useLoadBalancerForDataService: false
+  #  annotations: {}
+  #  clusterServiceAnnotations: {}
+  #  labels: {}
+  #  clusterServiceLabels: {}
+
+
+  ############################################################
+  # @section Workload values - Deployment and StatefulSet
+  #
+  # Two workloads supported:
+  #  - Deployment
+  #  - StatefulSet
+  ############################################################
+  workload:
+    # @param    global.workload Can be Deployment or StatefulSet
+    # @default  Deployment
+    type: Deployment
+
+    # @param global.workload.annotations Annotations to apply to the template in the workload.
+    # @desc  To apply top-level annotations to the Deployment or StatefulSet itself, use
+    # @desc  global.workload.deployment.annotations or global.workload.statefulSet.annotations.
+    annotations: {}
+
+    # @param global.workload.labels Labels to apply to the template in the workload.
+    # @desc  To apply top-level labels to the Deployment or StatefulSet itself, use
+    # @desc  global.workload.deployment.labels or global.workload.statefulSet.labels.
+    labels: {}
+
+    ############################################################
+    # @param    global.workload.schedulerName K8s scheduler
+    # @default  default-scheduler
+    #
+    # https://kubernetes.io/docs/tasks/extend-kubernetes/configure-multiple-schedulers/
+    ############################################################
+    schedulerName: default-scheduler
+
+    ############################################################
+    # @param    global.workload.shareProcessNamespace Set shareProcessNamespace in the pod spec
+    # @default  false
+    #
+    # https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/
+    ############################################################
+    shareProcessNamespace: false
+
+    ############################################################
+    # @param    global.workload.enableServiceLinks indicates whether info
+    # @desc     about services can be added as env variables
+    # @default  true
+    #
+    # https://kubernetes.io/docs/concepts/services-networking/connect-applications-service/
+    ############################################################
+    enableServiceLinks: true
+
+    ############################################################
+    # @param    global.workload.topologySpreadConstraints 
+    # @desc     Configuration of pod spread across cluster zones
+    # @default  []
+    #
+    # https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+    ############################################################
+    topologySpreadConstraints: []
+
+    ############################################################
+    # PodDisruptionBudget
+    #
+    # @param    global.workload.podDisruptionBudget PodDisruptionBudget configuration
+    #
+    # @param    global.workload.podDisruptionBudget.enabled Enable PodDisruptionBudget generation
+    # @default  false
+    #
+    # @param    global.workload.podDisruptionBudget.minAvailable Minimum available pods
+    # @desc     Set exactly one of minAvailable or maxUnavailable. Accepts integer or percentage string.
+    #
+    # @param    global.workload.podDisruptionBudget.maxUnavailable Maximum unavailable pods
+    # @desc     Set exactly one of minAvailable or maxUnavailable. Accepts integer or percentage string.
+    #
+    # @param    global.workload.podDisruptionBudget.unhealthyPodEvictionPolicy
+    # @desc     Optional unhealthy pod eviction policy for the generated PodDisruptionBudget.
+    # @desc     Requires Kubernetes v1.31+.
+    # @desc     If set on Kubernetes versions older than v1.31, template rendering fails.
+    #
+    # @param    global.workload.podDisruptionBudget.annotations Annotations for the PodDisruptionBudget
+    #
+    # @param    global.workload.podDisruptionBudget.labels Labels for the PodDisruptionBudget
+    #
+    # @desc     PodDisruptionBudgets only affect voluntary disruptions that use the Eviction API.
+    # @desc     They do not prevent involuntary disruptions, direct pod deletion, workload deletion,
+    # @desc     or workload rolling updates.
+    # @desc     Percentage values round up, which can allow full disruption of single-replica workloads.
+    # @desc     Strict budgets such as maxUnavailable: 0 or minAvailable: 100% can block kubectl drain.
+    ############################################################
+    podDisruptionBudget:
+      enabled: false
+      minAvailable:
+      maxUnavailable:
+      unhealthyPodEvictionPolicy:
+      annotations: {}
+      labels: {}
+
+    ############################################################
+    # Deployments
+    #
+    # @param    global.workload.deployment Deployment workload configuration
+    #
+    # @param    global.workload.deployment.strategy Deployment pod replacement strategy
+    #
+    # @param    global.workload.deployment.strategy.type Strategy type
+    # @default  RollingUpdate
+    #
+    # @param    global.workload.deployment.strategy.rollingUpdate.maxSurge Max surge,
+    # @desc     only applicable for RollingUpdate type
+    # @default  1
+    #
+    # @param    global.workload.deployment.strategy.rollingUpdate.maxUnavailable Max unavailable,
+    # @desc     only applicable for RollingUpdate type
+    # @default  0
+    #
+    # @param    global.workload.deployment.annotations
+    # @desc     Annotations to apply to the top-level Deployment.
+    # @desc     To apply annotations to the template within the Deployment, use
+    # @desc     global.workload.annotations.
+    #
+    # @param    global.workload.deployment.labels
+    # @desc     Labels to apply to the top-level Deployment.
+    # @desc     To apply labels to the template within the Deployment, use
+    # @desc     global.workload.labels.
+    #
+    # https://kubernetes.io/docs/concepts/workloads/controllers/deployment
+    ############################################################
+    deployment:
+      strategy:
+        # Can be RollingUpdate or Recreate
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
+      annotations: {}
+      labels: {}
+
+    ############################################################
+    # StatefulSets
+    #
+    # @param global.workload.statefulSet StatefulSet workload configuration
+    #
+    # https://kubernetes.io/docs/concepts/workloads/controllers/statefulset
+    ############################################################
+    statefulSet:
+      # @param    global.workload.statefulSet.partition Used for canary testing if n>0
+      # @default  0
+      partition: 0
+
+      ############################################################
+      # Persistent Volumes
+      #
+      # @param    global.workload.statefulSet.persistentvolume.enabled
+      # @desc     Enable persistent volumes
+      # @default  true
+      #
+      # @param    global.workload.statefulSet.persistentvolume.volumes
+      # @desc     For every volume defined in the volumes list, 3 items will be
+      # @desc     created in the StatefulSet:
+      # @desc     1. container.volumeMounts - name and mountPath.
+      # @desc     2. template.spec.volume - name and persistentVolumeClaim.claimName.
+      # @desc     3. spec.volumeClaimTemplates - persistentVolumeClaim.
+      # @default  {out-dir}
+      #
+      # @param    global.workload.statefulSet.persistentvolume.volumes.volumeName.mountPath
+      # @desc     Mount path for the volume
+      #
+      # @param    global.workload.statefulSet.persistentvolume.volumes.volumeName.persistentVolumeClaim
+      # @desc     volumeClaimTemplate
+      #
+      # https://kubernetes.io/docs/concepts/storage/persistent-volumes/
+      ############################################################
+      persistentvolume:
+        enabled: true
+        volumes:
+          out-dir:
+            mountPath: /opt/out
+            persistentVolumeClaim:
+              accessModes:
+              - ReadWriteOnce
+              storageClassName:
+              resources:
+                requests:
+                  storage: 4Gi
+
+      # @param    global.workload.statefulSet.podManagementPolicy Controls how pods
+      # @desc     are created during initial scale up, when replacing pods on nodes,
+      # @desc     or when scaling down. The default behavior is OrderedReady. The
+      # @desc     Parallel podManagementPolicy allows for starting up and scaling
+      # @desc     down multiple Pods simultaneously. Updates are not affected.
+      # @desc     The only products that support Parallel are
+      # @desc     PingDirectory and PingDataSync, on versions 2209 and later. When
+      # @desc     using the Parallel policy, consider setting the RETRY_TIMEOUT_SECONDS
+      # @desc     environment variable to a higher value (it defaults to 180) for the
+      # @desc     Pods. If the value is too low with many servers starting at once, it
+      # @desc     may lead to some Pods restarting unnecessarily during the initial
+      # @desc     workload startup.
+      # @default  OrderedReady
+      podManagementPolicy: OrderedReady
+
+      # @param global.workload.statefulSet.annotations
+      # @desc  Annotations to apply to the top-level StatefulSet.
+      # @desc  To apply annotations to the template within the StatefulSet, use
+      # @desc  global.workload.annotations.
+      annotations: {}
+
+      # @param global.workload.statefulSet.labels
+      # @desc  Labels to apply to the top-level StatefulSet.
+      # @desc  To apply labels to the template within the StatefulSet, use
+      # @desc  global.workload.labels.
+      labels: {}
+
+    ############################################################
+    # @param    global.workload.securityContext securityContext for the workload Pod spec.
+    # @desc     The securityContext defined will be inserted directly into the Pod spec.
+    # @desc     The user (9031) and group (0) represent the current user and group used
+    # @desc     with PingIdentity images (except PingDelegator). The fsGroup is
+    # @desc     required for any workloads that volumeMount a pvc (i.e. StatefulSets).
+    # @desc     Set as securityContext: null when no generated securityContext is desired.
+    # @default  fsGroup 0, runAsUser 9031, runAsGroup 0
+    ############################################################
+    securityContext:
+      fsGroup: 0
+      runAsUser: 9031
+      runAsGroup: 0
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+
+  #############################################################
+  # Horizontal Pod Autoscaling
+  # By default this is disabled, since there dependencies to the containers
+  # CPU and/or Memory limits.
+  #
+  # @param    global.clustering.autoscaling Configure Horizontal Pod Autoscaling
+  #
+  # @param    global.clustering.autoscaling.enabled Enable Horizontal Pod Autoscaling.
+  # @desc     If enabled, ensure that proper container.resources values are set and
+  # @desc     coordinated with the targetCPUUtilizationPercentage or targetMemoryUtilizationPercentage
+  # @default  false
+  #
+  # @param    global.clustering.autoscaling.minReplicas Autoscaler minimum replicas
+  # @default  1
+  #
+  # @param    global.clustering.autoscaling.maxReplicas Autoscaler maximum replicas
+  # @default  4
+  #
+  # @param    global.clustering.autoscaling.targetCPUUtilizationPercentage Target CPU utilization
+  # @default  75
+  #
+  # @param    global.clustering.autoscaling.targetMemoryUtilizationPercentage Target memory utilization
+  #
+  # @param    global.clustering.autoscaling.annotations Custom annotations for the HPA.
+  #
+  # @param    global.clustering.autoscaling.labels Custom labels for the HPA.
+  #
+  # @param    global.clustering.autoscaling.behavior Custom HPA behavior yaml
+  # @default  {}
+  #
+  # @param    global.clustering.autoscalingMetricsTemplate Custom HPA metrics yaml
+  # @default  []
+  #############################################################
+  clustering:
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 75
+      # targetMemoryUtilizationPercentage: 50
+      annotations: {}
+      labels: {}
+      behavior: { }
+      # Custom Horizontal Pod Scaling behavior
+      # ref: https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#default-behavior
+      #  scaleDown:
+      #    stabilizationWindowSeconds: 300
+      #    policies:
+      #    - type: Percent
+      #      value: 100
+      #      periodSeconds: 15
+      #  scaleUp:
+      #    stabilizationWindowSeconds: 0
+      #    policies:
+      #    - type: Percent
+      #      value: 100
+      #      periodSeconds: 15
+      #    - type: Pods
+      #      value: 4
+      #      periodSeconds: 15
+      #    selectPolicy: Max
+
+    autoscalingMetricsTemplate: [ ]
+    # Custom or additional autoscaling metrics
+    # ref: https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#support-for-custom-metrics
+    # - type: Pods
+    #   pods:
+    #     metric:
+    #       name: custom-metric
+    #     target:
+    #       type: AverageValue
+    #       averageValue: 10000m
+
+  ############################################################
+  # Container Information
+  #
+  # @param global.container Configure the container in the workload Pod spec
+  #
+  # https://kubernetes.io/docs/concepts/workloads/controllers/
+  ############################################################
+  container:
+    ############################################################
+    # @param    global.workload.container.securityContext securityContext at the container
+    # @desc     level for the workload. The securityContext defined will be inserted
+    # @desc     directly into the spec for the main container of the Pod. Container-level
+    # @desc     securityContext values will overwrite any corresponding values from the
+    # @desc     Pod-level securityContext.
+    # @default  allowPrivilegeEscalation: false, capabilities: drop: ALL
+    #
+    # See https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+    ############################################################
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+    # @param global.container.replicaCount Number of replicas for workload
+    # @default 1
+    replicaCount: 1
+
+    # resources - Request  0 cpu/0 GB
+    #             Limit    4 cpu/0 GB
+    # @param global.container.resources container resources yaml to insert into Pod spec
+    resources:
+      requests:
+        cpu: 0
+        memory: 0
+      limits:
+        cpu: 0
+        memory: 0
+    # @param global.container.nodeSelector nodeSelector yaml to insert into Pod spec
+    # @default {}
+    nodeSelector: {}
+    # @param global.container.tolerations tolerations yaml to insert into Pod spec
+    # @default []
+    tolerations: []
+    # @param global.container.affinity affinity yaml to insert into Pod spec
+    # @default {}
+    affinity: {}
+    # @param global.container.terminationGracePeriodSeconds termination grace period
+    # @default 30
+    terminationGracePeriodSeconds: 30
+
+    # @param global.container.envFrom envFrom yaml to insert into Pod spec
+    # @default []
+    envFrom: []
+    # Additional envFrom configmap/secret references can be added
+    # envFrom:
+    # - configMapRef:
+    #     name: my-example-configmap
+    #     optional: true
+    # - secretRef:
+    #     name: my-example-secrets
+    #     optional: true
+
+    # @param   global.container.env Additional environment variables
+    # @desc    to insert into the Pod spec. Unlike the global.envs values,
+    # @desc    these will be set directly on the Pod. global.envs values
+    # @desc    are set in ConfigMaps rather than on the Pod directly.
+    # @desc    This value allows for setting the valueFrom field for an
+    # @desc    environment variable when necessary.
+    # @default []
+    env:
+      - name: PING_IDENTITY_ACCEPT_EULA
+        value: "YES"
+
+    ############################################################
+    # container life handlers, allowing for lifecycle events such
+    # as postStart and preStop events
+    #
+    # @param global.container.lifecycle lifecycle yaml to insert into Pod spec
+    #
+    # https://kubernetes.io/docs/tasks/configure-pod-container/attach-handler-lifecycle-event
+    ############################################################
+    lifecycle: {}
+    # Example
+    # lifecycle:
+    #   postStart:
+    #     exec:
+    #       command: ["/bin/sh", "-c", "echo Start Complete > /tmp/message"]
+
+    ############################################################
+    # Probes
+    #
+    # @param    global.container.probes probes yaml to insert into Pod spec
+    # @default  liveness, readiness, and startup probes defined
+    #
+    # Probes have a number of fields that you can use to more precisely control the
+    # behavior of liveness and readiness checks.
+    #
+    # https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+    ############################################################
+    probes:
+      livenessProbe:
+        exec:
+          command:
+            - /opt/liveness.sh
+        initialDelaySeconds: 30
+        periodSeconds: 30
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 4
+      readinessProbe:
+        exec:
+          command:
+            - /opt/readiness.sh
+        initialDelaySeconds: 30
+        periodSeconds: 5
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 4
+      startupProbe:
+        exec:
+          command:
+            - /opt/liveness.sh
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 90
+
+  ############################################################
+  # @section Other global defaults
+  # Licensing
+  #
+  # @param    global.license.secret.devOps Identify the k8s secret containing the DevOps
+  # @desc     USER/KEY if used during deployment. pingctl can be used to generate the devops-secret
+  # @default  devops-secret
+  #
+  # Using pingctl utility (brew install pingctl):
+  #    pingctl k8s generate devops-secret | kubectl apply -f -
+  ############################################################
+  license:
+    secret:
+      devOps: devops-secret
+
+  # @param    global.utilitySidecar Deploy a utility sidecar for running command-line tools.
+  # @desc     This sidecar is useful for command line utilities like collect-support-data. The sidecar
+  # @desc     will remain running alongside the workload, even when the sidecar isn't being used.
+  # @desc     It does not need to be listed in the includeSidecars value.
+  #
+  # @param    global.utilitySidecar.enabled Enable the utility sidecar
+  # @default  false
+  #
+  # @param    global.utilitySidecar.image Override image fields for the sidecar.
+  # @desc     Any image fields not set here inherit from the product image.
+  #
+  # @param    global.utilitySidecar.command Override the sidecar container command
+  # @default  ["tail"]
+  #
+  # @param    global.utilitySidecar.args Override the sidecar container args
+  # @default  ["-f", "/dev/null"] when command is not overridden
+  #
+  # @param    global.utilitySidecar.resources Set k8s resources yaml for the sidecar spec
+  # @default  1 CPU and 2g memory limit, 0 CPU and 128Mi memory request
+  #
+  # @param    global.utilitySidecar.envFrom Optional envFrom sources for the sidecar
+  # @default  []
+  #
+  # @param    global.utilitySidecar.env Environment variables for the sidecar
+  # @default  []
+  #
+  # @param    global.utilitySidecar.volumes Additional sidecar volumeMounts
+  # @desc     This existing field only adds container-level volumeMounts to the utility sidecar.
+  # @desc     It does not create pod-level volumes implicitly.
+  # @desc     The chart automatically creates emptyDir backing volumes for temp and out-dir
+  # @desc     only when the utility sidecar is enabled and the workload does not already define them.
+  # @desc     StatefulSet out-dir PVC behavior remains unchanged when already configured.
+  # @default  []
+  utilitySidecar:
+    enabled: false
+    # command:
+    #   - tail
+    # args:
+    #   - -f
+    #   - /dev/null
+    # image: {}
+    # CSD and other command line tools can require a lot of resources.
+    # Modify these values to change the sidecar container's resource requirements.
+    resources:
+      limits:
+        cpu: "1"
+        memory: 2Gi
+      requests:
+        cpu: "0"
+        memory: "128Mi"
+    ############################################################
+    # @param    global.utilitySidecar.securityContext securityContext at the container
+    # @desc     level for the sidecar. The securityContext defined will be inserted
+    # @desc     directly into the spec for the sidecar. By default no
+    # @desc     container securityContext is defined. In Kubernetes when a container-level
+    # @desc     securityContext is set, it will overwrite any corresponding values from the
+    # @desc     Pod-level securityContext.
+    # @default  allowPrivilegeEscalation: false, capabilities: drop: ALL
+    #
+    # See https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+    ############################################################
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+    # Environment variables for the sidecar if needed
+    # env:
+    #   - name: LOG_LEVEL
+    #     value: "INFO"
+    # envFrom:
+    #   - configMapRef:
+    #       name: my-sidecar-config
+    # volumes:
+    #   - name: shared-config
+    #     mountPath: /opt/in/shared-config
+
+  #############################################################
+  # Includes for sidecars, initContainers and volumes
+  #
+  # At both global and product level, includes of sidecars,
+  # initContainers and volumes can be provided.  By default,
+  # none are included.
+  #
+  # @param    global.includeSidecars names of sidecars to include, from the top-level `sidecars` value
+  # @default  []
+  #
+  # @param    global.includeInitContainers names of sidecars to include, from the top-level `initContainers` value
+  # @default  []
+  #
+  # @param    global.includeVolumes names of sidecars to include, from the top-level `volumes` value
+  # @default  []
+  #############################################################
+  includeSidecars: []
+  includeInitContainers: []
+  includeVolumes: []
+
+#############################################################
+# @section Shared utilities
+# Sidecar Definitions
+#
+# @param    sidecars Sidecar yaml definitions available to product workload spec
+# @default  {}
+#############################################################
+sidecars: {}
+# Example:
+# sidecars:
+#   logger:
+#     name: log-container
+#     image: pingidentity/pingtoolkit:2607
+#     volumeMounts:
+#       - mountPath: /tmp/logs/
+#         name: logger
+#         readOnly: false
+
+#############################################################
+# InitContainer Definitions
+#
+# @param    initContainers initContainer yaml definitions available to product workload spec
+# @default  {}
+#############################################################
+initContainers: {}
+# Example:
+# initContainers:
+#   init-example:
+#     name: 01-init
+#     image: pingidentity/pingtoolkit:2607
+#     command: ['sh', '-c', 'echo "InitContainer 1"']
+
+#############################################################
+# Volume Definitions
+#
+# @param    volumes volume yaml definitions available to product workload spec
+# @desc     for sidecars, initContainers, or main product containers
+# @default  {}
+#############################################################
+volumes: {}
+# Examples:
+# volumes:
+#   logger:
+#     emptyDir: {}
+
+#############################################################
+# ConfigMap Definitions
+#
+# @param    configMaps configMap yaml definitions available to product workload spec
+# @desc     for sidecars or main product containers
+# @default  {}
+#############################################################
+configMaps: {}
+# Example:
+# configMaps:
+#   pingdirectory-backup:
+#     data:
+#       backup.sh: |-
+#         #!/bin/sh
+#         ...
+
+#############################################################
+# @section Image/Product values
+#############################################################
+
+#############################################################
+# @param    ldap-sdk-tools LDAP SDK tools values
+#
+# @param    ldap-sdk-tools.enabled Enable LDAP SDK tools deployment
+# @default  false
+#############################################################
+ldap-sdk-tools:
+  enabled: false
+  name: ldap-sdk-tools
+  image:
+    name: ldap-sdk-tools
+    repository: pingidentity
+    repositoryFqn:
+    tag: "2607"
+    pullPolicy: IfNotPresent
+
+pingfederate-admin:
+  # @param    pingfederate-admin.cronjob CronJobs run a kubectl exec command to run commands on
+  # @desc     a utility sidecar container. They will also create the necessary ServiceAccount, Role,
+  # @desc     and RoleBinding to run the jobs
+  #
+  # @param    pingfederate-admin.cronjob.enabled Enable the PingFederate Admin CronJob
+  # @default  false
+  #
+  # @param    pingfederate-admin.cronjob.spec yaml to insert into the created CronJob spec. If specified,
+  # @desc     this will override any other specified values for the CronJob.
+  #
+  # @param    pingfederate-admin.cronjob.spec.jobTemplate
+  # @desc     yaml to override default jobTemplate. If a jobTemplate is not
+  # @desc     overridden, a default template will be inserted.
+  #
+  # @param    pingfederate-admin.cronjob.image
+  # @desc     Image to run the jobs. The image must include kubectl and sh.
+  # @default  pingidentity/pingtoolkit:latest
+  #
+  # @param    pingfederate-admin.cronjob.args Job arguments
+  # @default  []
+  cronjob:
+    enabled: false
+    ############################################################
+    # @param    pingfederate-admin.cronjob.podSecurityContext securityContext for the pod
+    # @desc     in the jobTemplate. This will be used if a jobTemplate is not specified.
+    # @default  null
+    ############################################################
+    podSecurityContext: null
+    ############################################################
+    # @param    pingfederate-admin.cronjob.podSecurityContext securityContext for the container
+    # @desc     in the jobTemplate. This will be used if a jobTemplate is not specified.
+    # @default  allowPrivilegeEscalation: false, capabilities: drop: ALL
+    ############################################################
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+    spec: {}
+      # A schedule must be set for cronjobs.
+      # This chart does not provide a default schedule, so it must be set, e.g.:
+      # schedule: "0 */6 * * *"
+      # Kubernetes will default the successfulJobsHistoryLimit and failedJobsHistoryLimit to 3 and 1 respectively.
+      # If you want to change these values, you can set them in the spec, e.g.:
+      # successfulJobsHistoryLimit: 0
+      # failedJobsHistoryLimit: 1
+    # The image can be replaced with any image that includes the kubectl and sh commands.
+    image: pingidentity/pingtoolkit:latest
+    args: []
+  enabled: true
+  name: pingfederate-admin
+  image:
+    name: pingfederate
+
+  container:
+    resources:
+      requests:
+        cpu: 0
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 4Gi
+
+  workload:
+    deployment:
+      strategy:
+        type: Recreate
+
+  # Mounts the pingfederate-license secret (created by infrastructure/main.tf
+  # from a local .lic file) at the exact path PingFederate checks for an
+  # existing license, so it skips the devops-secret evaluation-license flow.
+  volumes:
+    - name: pf-license
+      secret:
+        secretName: pingfederate-license
+  volumeMounts:
+    - name: pf-license
+      mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
+      subPath: pingfederate.lic
+
+  # Example: If PingFederate Admin relies on pingdirectory for AuthN
+  #          Creates init container wait-for on pingdirectory ldaps service
+  #
+  # container:
+  #   waitFor:
+  #     pingdirectory:
+  #       service: ldaps
+  #       timeoutSeconds: 300
+
+  services:
+    https:
+      servicePort: 9999
+      containerPort: 9999
+      ingressPort: 443
+      gatewayPort: 443
+      dataService: true
+    clusterbind:
+      servicePort: 7600
+      containerPort: 7600
+      clusterService: true
+    clusterfail:
+      servicePort: 7700
+      containerPort: 7700
+      clusterService: true
+    clusterServiceName: pingfederate-cluster
+
+  ingress:
+    hosts:
+      - host: pingfederate-admin._defaultDomain_
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            serviceName: https
+    tls:
+      - secretName: _defaultTlsSecret_
+        hosts:
+          - pingfederate-admin._defaultDomain_
+
+#############################################################
+# @param    pingfederate-engine PingFederate engine values
+#
+# @param    pingfederate-engine.enabled Enable PingFederate engine deployment
+# @default  false
+#############################################################
+pingfederate-engine:
+  # @param    pingfederate-engine.cronjob CronJobs run a kubectl exec command to run commands on
+  # @desc     a utility sidecar container. They will also create the necessary ServiceAccount, Role,
+  # @desc     and RoleBinding to run the jobs
+  #
+  # @param    pingfederate-engine.cronjob.enabled Enable the PingFederate engine CronJob
+  # @default  false
+  #
+  # @param    pingfederate-engine.cronjob.spec yaml to insert into the created CronJob spec. If specified,
+  # @desc     this will override any other specified values for the CronJob.
+  #
+  # @param    pingfederate-engine.cronjob.spec.jobTemplate
+  # @desc     yaml to override default jobTemplate. If a jobTemplate is not
+  # @desc     overridden, a default template will be inserted.
+  #
+  # @param    pingfederate-engine.cronjob.image
+  # @desc     Image to run the Jobs. The image must include kubectl and sh.
+  # @default  pingidentity/pingtoolkit:latest
+  #
+  # @param    pingfederate-engine.cronjob.args Job arguments
+  # @default  []
+  cronjob:
+    enabled: false
+    ############################################################
+    # @param    pingfederate-engine.cronjob.podSecurityContext securityContext for the pod
+    # @desc     in the jobTemplate. This will be used if a jobTemplate is not specified.
+    # @default  null
+    ############################################################
+    podSecurityContext: null
+    ############################################################
+    # @param    pingfederate-engine.cronjob.podSecurityContext securityContext for the container
+    # @desc     in the jobTemplate. This will be used if a jobTemplate is not specified.
+    # @default  allowPrivilegeEscalation: false, capabilities: drop: ALL
+    ############################################################
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+    spec: {}
+      # A schedule must be set for cronjobs.
+      # This chart does not provide a default schedule, so it must be set, e.g.:
+      # schedule: "0 */6 * * *"
+      # Kubernetes will default the successfulJobsHistoryLimit and failedJobsHistoryLimit to 3 and 1 respectively.
+      # If you want to change these values, you can set them in the spec, e.g.:
+      # successfulJobsHistoryLimit: 0
+      # failedJobsHistoryLimit: 1
+    # The image can be replaced with any image that includes the kubectl and sh commands.
+    image: pingidentity/pingtoolkit:latest
+    args: []
+  enabled: true
+  name: pingfederate-engine
+  image:
+    name: pingfederate
+
+  container:
+    resources:
+      requests:
+        cpu: 0
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 4Gi
+    waitFor:
+      pingfederate-admin:
+        service: https
+        timeoutSeconds: 300
+
+  # The engine runs its own local license check at startup (it doesn't just
+  # inherit the license via cluster sync), so it needs the same
+  # pingfederate-license secret mounted as pingfederate-admin does.
+  volumes:
+    - name: pf-license
+      secret:
+        secretName: pingfederate-license
+  volumeMounts:
+    - name: pf-license
+      mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
+      subPath: pingfederate.lic
+
+  envs:
+    PF_ADMIN_PORT: "9999"
+
+  services:
+    https:
+      servicePort: 9031
+      containerPort: 9031
+      ingressPort: 443
+      gatewayPort: 443
+      dataService: true
+    clusterbind:
+      servicePort: 7600
+      containerPort: 7600
+      clusterService: true
+    clusterfail:
+      servicePort: 7700
+      containerPort: 7700
+      clusterService: true
+    clusterServiceName: pingfederate-cluster
+
+  ingress:
+    hosts:
+      - host: pingfederate-engine._defaultDomain_
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            serviceName: https
+    tls:
+      - secretName: _defaultTlsSecret_
+        hosts:
+          - pingfederate-engine._defaultDomain_
+
+#############################################################
+# @param    pingdirectory PingDirectory values
+#
+# @param    pingdirectory.enabled Enable PingDirectory deployment
+# @default  false
+#############################################################
+pingdirectory:
+  enabled: false
+  name: pingdirectory
+  image:
+    name: pingdirectory
+  # templates/pingdirectory/cronjob.yaml checks this directly, bypassing
+  # the generic enabled-guard other products use — must stay present.
+  cronjob:
+    enabled: false
+
+pingdirectoryproxy:
+  enabled: false
+  name: pingdirectoryproxy
+  image:
+    name: pingdirectoryproxy
+
+pingdelegator:
+  enabled: false
+  name: pingdelegator
+  image:
+    name: pingdelegator
+
+pingdatasync:
+  enabled: false
+  name: pingdatasync
+  image:
+    name: pingdatasync
+
+pingauthorize:
+  enabled: false
+  name: pingauthorize
+  image:
+    name: pingauthorize
+
+pingauthorizepap:
+  enabled: false
+  name: pingauthorizepap
+  image:
+    name: pingauthorizepap
+
+pingaccess-admin:
+  enabled: false
+  name: pingaccess-admin
+  image:
+    name: pingaccess
+
+pingaccess-engine:
+  enabled: false
+  name: pingaccess-engine
+  image:
+    name: pingaccess
+
+pingcentral:
+  enabled: false
+  name: pingcentral
+  image:
+    name: pingcentral
+
+pingdataconsole:
+  enabled: false
+  name: pingdataconsole
+  image:
+    name: pingdataconsole
+
+pd-replication-timing:
+  enabled: false
+  name: pd-replication-timing
+  image:
+    name: pingtoolkit
+    repository: pingidentity
+    repositoryFqn:
+    tag: "2607"
+    pullPolicy: IfNotPresent
+
+pingtoolkit:
+  # enabled stays false — this block isn't a deployment toggle, it's the
+  # utility image used by other products' waitFor init containers (see
+  # templates/pinglib/_workload.tpl), including pingfederate-engine's
+  # wait-for-pingfederate-admin init container. Do not strip image: below.
+  enabled: false
+  name: pingtoolkit
+  image:
+    name: pingtoolkit
+    repository: pingidentity
+    repositoryFqn:
+    tag: "2607"
+    pullPolicy: IfNotPresent
+
+testFramework:
+  # Disabled by default
+  enabled: false
+  name: testframework
+  sharedMountPath: /var/run/shared
+
+  #########################################################
+  # If rbac is enabled, this will create:
+  #   - serviceAccount
+  #   - role
+  #   - roleBinding (between serviceAccount and role)
+  #
+  # @param    testFramework.rbac.serviceAccountImagePullSecrets
+  # @desc     Repository authentication using secrets
+  # @desc     defined as a docker-registry secrets in Kubernetes.
+  # @default  []
+  #
+  # https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+  #
+  # and apply the serviceAccount to the pod in the tests.
+  # The names for these resources will be named using the
+  # naming rules for all resources including the ReleaseName
+  #########################################################
+  rbac:
+    enabled: true
+    serviceAccountImagePullSecrets: []
+    role:
+      rules:
+      - apiGroups:
+        - '*'
+        resources:
+        - '*'
+        verbs:
+        - '*'
+
+  testConfigMaps:
+    prefix: ping-devops-test-
+    volumeMountPath: /var/run/
+    #########################################################
+    # Array of configmap names (prefixed with prefix above)
+    # Example includes:
+    #########################################################
+    # files:
+    #   - init-test.sh
+    #   - check-pingfederate.postman-collection.json
+    #   - generated.postman-environment.json
+
+  testSteps: []
+    #########################################################
+    # Array of steps.
+    # Example includes:
+    #
+    # waitFor - Example below will create 2 init containers:
+    #           - 01-wait-for-pingfederate-admin
+    #           - 01-wait-for-pingfederate-engine
+    #########################################################
+    # - name: 01-wait-for
+    #   waitFor:
+    #     pingfederate-admin:
+    #       service: https
+    #     pingfederate-engine:
+    #       service: https
+
+    # - name: 02-init-test
+    #   image: busybox
+    #   command:
+    #     - /bin/sh
+    #     - /var/run/init-test.sh
+
+    # - name: 03-check-pingfederate
+    #   image: postman/newman:5-alpine
+    #   command:
+    #     - newman
+    #     - run
+    #     - /var/run/check-pingfederate.postman-collection.json
+    #     - --environment
+    #     - /var/run/generated.postman-environment.json
+    #     - --insecure
+    #     - --ignore-redirects
+
+  finalStep:
+    name: 99-completion
+    image: busybox
+    imagePullPolicy: IfNotPresent
+    command:
+      - /bin/sh
+      - -c
+      - echo "*************************************"; echo "Testing Complete"; date; echo "*************************************";
+      - exit 0
+    resources:
+      limits:
+        cpu: 500m
+        memory: 128Mi
+      requests:
+        cpu: 1m
+        memory: 64Mi
+
+  #########################################################
+  # Pod information to include
+  #
+  # Examples:
+  #   securityContext for all containers
+  #########################################################
+  pod:
+    securityContext:
+      fsGroup: 0
+      runAsUser: 9031
+      runAsGroup: 0
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
