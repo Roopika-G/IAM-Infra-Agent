@@ -1228,40 +1228,32 @@ pingfederate-admin:
   # Mounts the pingfederate-license secret (created by infrastructure/main.tf
   # from a local .lic file) at the exact path PingFederate checks for an
   # existing license, so it skips the devops-secret evaluation-license flow.
-  #
-  # Also mounts the server profile (pingfederate-server-profile ConfigMap,
-  # also from infrastructure/main.tf) the same way — both files land under
-  # /opt/in/instance/..., which the container copies into staging on every
-  # startup before PingFederate reads any of it. data.json.subst (the
-  # datastore/bulk-config) is admin-only: admin is PF's config authority
-  # and pushes config to engines via its own cluster replication, engines
-  # don't independently import bulk-config — worth confirming once this is
-  # actually deployed. run.properties.subst applies to both, since it's
-  # genuine per-node startup config (see pingfederate-engine below).
   volumes:
     - name: pf-license
       secret:
         secretName: pingfederate-license
-    - name: pf-server-profile
-      configMap:
-        name: pingfederate-server-profile
   volumeMounts:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
       subPath: pingfederate.lic
-    - name: pf-server-profile
-      mountPath: /opt/in/instance/bin/run.properties.subst
-      subPath: run.properties.subst
-    - name: pf-server-profile
-      mountPath: /opt/in/instance/bulk-config/data.json.subst
-      subPath: data.json.subst
 
-  # Non-sensitive JDBC datastore values, read by
+  # SERVER_PROFILE_URL/PATH: git-based server profile (helm/server-profile/
+  # in this same repo, once pushed to GitHub) — the container clones this
+  # fresh on every startup and merges it into staging before PingFederate
+  # reads anything. Chosen over a ConfigMap-mounted profile specifically
+  # because the profile now includes a binary JDBC driver jar
+  # (server-profile/instance/server/default/lib/postgresql-42.7.9.jar) —
+  # ConfigMaps have a 1MiB hard limit and aren't meant for binaries at all;
+  # git has neither problem. TODO: fill in SERVER_PROFILE_URL once the repo
+  # is pushed (public repo assumed — no git credential wired in for it).
+  #
+  # POSTGRES_JDBC_*: non-sensitive JDBC datastore values, read by
   # helm/server-profile/instance/bulk-config/data.json.subst's ${...}
-  # placeholders. Deliberately ConfigMap-backed (this is how `envs:` works
-  # in this chart — see templates/pinglib/_workload.tpl's envFrom) rather
-  # than raw env entries, per preference.
+  # placeholders. ConfigMap-backed (this is how `envs:` works in this
+  # chart — see templates/pinglib/_workload.tpl's envFrom).
   envs:
+    SERVER_PROFILE_URL: "" # TODO: set to the iam-platform repo's clone URL
+    SERVER_PROFILE_PATH: "helm/server-profile/instance"
     POSTGRES_JDBC_URL: "jdbc:postgresql://postgres.pingfederate.svc.cluster.local:5432/postgres"
     POSTGRES_JDBC_USERNAME: "postgres"
 
@@ -1391,32 +1383,25 @@ pingfederate-engine:
   # The engine runs its own local license check at startup (it doesn't just
   # inherit the license via cluster sync), so it needs the same
   # pingfederate-license secret mounted as pingfederate-admin does.
-  #
-  # run.properties.subst also applies here (per-node startup/clustering
-  # config — this is what resolves OPERATIONAL_MODE=CLUSTERED_ENGINE for
-  # this component specifically). data.json.subst (bulk-config/datastores)
-  # is deliberately NOT mounted here — see pingfederate-admin above.
   volumes:
     - name: pf-license
       secret:
         secretName: pingfederate-license
-    - name: pf-server-profile
-      configMap:
-        name: pingfederate-server-profile
   volumeMounts:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
       subPath: pingfederate.lic
-    - name: pf-server-profile
-      mountPath: /opt/in/instance/bin/run.properties.subst
-      subPath: run.properties.subst
 
+  # SERVER_PROFILE_URL/PATH: same git-based server profile as
+  # pingfederate-admin (see the comment there for why git over ConfigMap).
   # POSTGRES_JDBC_URL/USERNAME: non-sensitive JDBC datastore values, read by
   # helm/server-profile/instance/bulk-config/data.json.subst's ${...}
   # placeholders. ConfigMap-backed like PF_ADMIN_PORT below (this is how
   # envs: works in this chart — see templates/pinglib/_workload.tpl).
   envs:
     PF_ADMIN_PORT: "9999"
+    SERVER_PROFILE_URL: "" # TODO: set to the iam-platform repo's clone URL
+    SERVER_PROFILE_PATH: "helm/server-profile/instance"
     POSTGRES_JDBC_URL: "jdbc:postgresql://postgres.pingfederate.svc.cluster.local:5432/postgres"
     POSTGRES_JDBC_USERNAME: "postgres"
 

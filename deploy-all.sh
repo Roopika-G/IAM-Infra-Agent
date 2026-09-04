@@ -13,8 +13,33 @@ INFRA_DIR="$ROOT_DIR/infrastructure"
 echo "===== Stage 0: Environment variables ====="
 source "$INFRA_DIR/.env"
 
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker doesn't appear to be running — start Docker Desktop and rerun." >&2
+  exit 1
+fi
+
 echo "===== Stage 1: Infrastructure (terraform) ====="
 terraform -chdir="$INFRA_DIR" init -input=false
+
+# Docker Desktop restarts/resets can silently wipe the kind cluster's
+# container while Terraform's state still thinks it exists — any
+# plan/apply/refresh then fails trying to inspect a cluster that's gone.
+# Detect that specific case and self-heal: drop every cluster-scoped
+# resource from state so this run just recreates them cleanly, instead of
+# needing a manual `terraform state rm` every time it happens. Safe: these
+# reads (state list, output) only touch the local state file, never the
+# (possibly-gone) cluster itself.
+if terraform -chdir="$INFRA_DIR" state list 2>/dev/null | grep -q '^kind_cluster\.'; then
+  CLUSTER_NAME="$(terraform -chdir="$INFRA_DIR" output -raw cluster_name 2>/dev/null || true)"
+  if [ -n "$CLUSTER_NAME" ] && ! docker ps -a --format '{{.Names}}' | grep -qx "${CLUSTER_NAME}-control-plane"; then
+    echo "Stale state: kind cluster '$CLUSTER_NAME' is tracked but its container is gone — cleaning up state."
+    terraform -chdir="$INFRA_DIR" state list 2>/dev/null \
+      | grep -E '^(kind_cluster\.|kubernetes_)' \
+      | while IFS= read -r resource; do
+          terraform -chdir="$INFRA_DIR" state rm "$resource"
+        done
+  fi
+fi
 
 # Two-phase apply: the kubernetes provider's config (host/certs) comes from
 # kind_cluster.this's own attributes, which aren't known until the cluster
