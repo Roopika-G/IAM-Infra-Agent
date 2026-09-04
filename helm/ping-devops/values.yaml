@@ -1357,6 +1357,15 @@ pingfederate-engine:
   image:
     name: pingfederate
 
+  # Stop the previous engine before starting its replacement. Keeping an old
+  # engine alive during an admin restart can make it the cluster coordinator
+  # and cause the admin bulk-import replication step to fail with 403
+  # license_agreement_not_accepted.
+  workload:
+    deployment:
+      strategy:
+        type: Recreate
+
   container:
     resources:
       requests:
