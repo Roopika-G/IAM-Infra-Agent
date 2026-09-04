@@ -17,7 +17,13 @@ echo "===== Stage 1: Infrastructure (terraform) ====="
 terraform -chdir="$INFRA_DIR" init -input=false
 terraform -chdir="$INFRA_DIR" apply -input=false
 
-echo "===== Stage 2: Helm chart ====="
+echo "===== Stage 2: Platform (Postgres) ====="
+# Must run before the helm chart — PingFederate's JDBC datastore connects
+# to Postgres at its own startup, with no wait-for/retry on it, so Postgres
+# needs to already be up first.
+"$ROOT_DIR/deploy-platform.sh"
+
+echo "===== Stage 3: Helm chart (PingFederate) ====="
 "$ROOT_DIR/deploy-helm.sh" "$@"
 
 echo "Deployment complete."

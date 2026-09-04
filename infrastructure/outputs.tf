@@ -19,3 +19,12 @@ output "pingfederate_license_secret_name" {
 output "admin_console_url" {
   value = "https://localhost:${var.admin_console_port}/pingfederate/app"
 }
+
+output "postgres_secret_name" {
+  value = kubernetes_secret.postgres_credentials.metadata[0].name
+}
+
+output "postgres_port" {
+  description = "Host port for psql/TablePlus/pgAdmin/etc. Connect as user 'postgres' with the password in the postgres-credentials secret."
+  value       = var.postgres_port
+}

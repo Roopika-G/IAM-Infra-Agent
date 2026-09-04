@@ -33,3 +33,15 @@ variable "admin_console_node_port" {
   type        = number
   default     = 30999
 }
+
+variable "postgres_port" {
+  description = "Host port Postgres is reachable at (localhost:<this>) for psql/TablePlus/pgAdmin/etc."
+  type        = number
+  default     = 5432
+}
+
+variable "postgres_node_port" {
+  description = "NodePort (must be in 30000-32767) the postgres_port is forwarded to inside the kind node."
+  type        = number
+  default     = 30432
+}

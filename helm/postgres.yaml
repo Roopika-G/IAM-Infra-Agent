@@ -1,0 +1,94 @@
+# Raw manifest (not a Helm chart) for Postgres. Uses the official
+# pgvector/pgvector image, which is a drop-in for the standard postgres
+# image (same entrypoint/env vars) with the pgvector extension compiled in —
+# Bitnami's postgresql image doesn't include it, and no maintained Helm
+# chart pairs cleanly with pgvector/pgvector for a simple single-instance
+# deployment, so this is applied directly via `kubectl apply` rather than
+# `helm upgrade --install` (see deploy-platform.sh).
+#
+# Namespace is deliberately unset here — deploy-platform.sh applies this
+# with `kubectl apply -n "$NAMESPACE"`, matching how the Helm releases also
+# take --namespace rather than hardcoding it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  type: NodePort
+  selector:
+    app: postgres
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+      nodePort: 30432 # must match infrastructure/variables.tf's postgres_node_port
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:0.8.6-pg17
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: postgres
+            # _FILE variant reads the password from the mounted secret
+            # instead of a plain env var, so it doesn't show up in
+            # `kubectl describe pod`.
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/secrets/postgres-credentials/POSTGRES_JDBC_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: credentials
+              mountPath: /run/secrets/postgres-credentials
+              readOnly: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: credentials
+          secret:
+            secretName: postgres-credentials
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 4Gi

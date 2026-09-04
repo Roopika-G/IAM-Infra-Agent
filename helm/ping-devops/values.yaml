@@ -1209,6 +1209,16 @@ pingfederate-admin:
       limits:
         cpu: 2
         memory: 4Gi
+    # Password kept off the envs:/ConfigMap path deliberately — pulled
+    # straight from the existing postgres-credentials Secret
+    # (infrastructure/main.tf) instead of a plaintext-readable ConfigMap.
+    # URL/username are ConfigMap-backed, see envs: below.
+    env:
+      - name: POSTGRES_JDBC_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: postgres-credentials
+            key: POSTGRES_JDBC_PASSWORD
 
   workload:
     deployment:
@@ -1218,14 +1228,42 @@ pingfederate-admin:
   # Mounts the pingfederate-license secret (created by infrastructure/main.tf
   # from a local .lic file) at the exact path PingFederate checks for an
   # existing license, so it skips the devops-secret evaluation-license flow.
+  #
+  # Also mounts the server profile (pingfederate-server-profile ConfigMap,
+  # also from infrastructure/main.tf) the same way — both files land under
+  # /opt/in/instance/..., which the container copies into staging on every
+  # startup before PingFederate reads any of it. data.json.subst (the
+  # datastore/bulk-config) is admin-only: admin is PF's config authority
+  # and pushes config to engines via its own cluster replication, engines
+  # don't independently import bulk-config — worth confirming once this is
+  # actually deployed. run.properties.subst applies to both, since it's
+  # genuine per-node startup config (see pingfederate-engine below).
   volumes:
     - name: pf-license
       secret:
         secretName: pingfederate-license
+    - name: pf-server-profile
+      configMap:
+        name: pingfederate-server-profile
   volumeMounts:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
       subPath: pingfederate.lic
+    - name: pf-server-profile
+      mountPath: /opt/in/instance/bin/run.properties.subst
+      subPath: run.properties.subst
+    - name: pf-server-profile
+      mountPath: /opt/in/instance/bulk-config/data.json.subst
+      subPath: data.json.subst
+
+  # Non-sensitive JDBC datastore values, read by
+  # helm/server-profile/instance/bulk-config/data.json.subst's ${...}
+  # placeholders. Deliberately ConfigMap-backed (this is how `envs:` works
+  # in this chart — see templates/pinglib/_workload.tpl's envFrom) rather
+  # than raw env entries, per preference.
+  envs:
+    POSTGRES_JDBC_URL: "jdbc:postgresql://postgres.pingfederate.svc.cluster.local:5432/postgres"
+    POSTGRES_JDBC_USERNAME: "postgres"
 
   # Example: If PingFederate Admin relies on pingdirectory for AuthN
   #          Creates init container wait-for on pingdirectory ldaps service
@@ -1339,21 +1377,48 @@ pingfederate-engine:
       pingfederate-admin:
         service: https
         timeoutSeconds: 300
+    # Password kept off the envs:/ConfigMap path deliberately — pulled
+    # straight from the existing postgres-credentials Secret
+    # (infrastructure/main.tf) instead of a plaintext-readable ConfigMap.
+    # URL/username are ConfigMap-backed, see envs: below.
+    env:
+      - name: POSTGRES_JDBC_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: postgres-credentials
+            key: POSTGRES_JDBC_PASSWORD
 
   # The engine runs its own local license check at startup (it doesn't just
   # inherit the license via cluster sync), so it needs the same
   # pingfederate-license secret mounted as pingfederate-admin does.
+  #
+  # run.properties.subst also applies here (per-node startup/clustering
+  # config — this is what resolves OPERATIONAL_MODE=CLUSTERED_ENGINE for
+  # this component specifically). data.json.subst (bulk-config/datastores)
+  # is deliberately NOT mounted here — see pingfederate-admin above.
   volumes:
     - name: pf-license
       secret:
         secretName: pingfederate-license
+    - name: pf-server-profile
+      configMap:
+        name: pingfederate-server-profile
   volumeMounts:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
       subPath: pingfederate.lic
+    - name: pf-server-profile
+      mountPath: /opt/in/instance/bin/run.properties.subst
+      subPath: run.properties.subst
 
+  # POSTGRES_JDBC_URL/USERNAME: non-sensitive JDBC datastore values, read by
+  # helm/server-profile/instance/bulk-config/data.json.subst's ${...}
+  # placeholders. ConfigMap-backed like PF_ADMIN_PORT below (this is how
+  # envs: works in this chart — see templates/pinglib/_workload.tpl).
   envs:
     PF_ADMIN_PORT: "9999"
+    POSTGRES_JDBC_URL: "jdbc:postgresql://postgres.pingfederate.svc.cluster.local:5432/postgres"
+    POSTGRES_JDBC_USERNAME: "postgres"
 
   services:
     https:
