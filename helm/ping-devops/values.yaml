@@ -1252,7 +1252,7 @@ pingfederate-admin:
   # placeholders. ConfigMap-backed (this is how `envs:` works in this
   # chart — see templates/pinglib/_workload.tpl's envFrom).
   envs:
-    SERVER_PROFILE_URL: "" # TODO: set to the iam-platform repo's clone URL
+    SERVER_PROFILE_URL: "https://github.com/Roopika-G/IAM-Infra-Agent.git"
     SERVER_PROFILE_PATH: "helm/server-profile/instance"
     POSTGRES_JDBC_URL: "jdbc:postgresql://postgres.pingfederate.svc.cluster.local:5432/postgres"
     POSTGRES_JDBC_USERNAME: "postgres"
@@ -1400,7 +1400,7 @@ pingfederate-engine:
   # envs: works in this chart — see templates/pinglib/_workload.tpl).
   envs:
     PF_ADMIN_PORT: "9999"
-    SERVER_PROFILE_URL: "" # TODO: set to the iam-platform repo's clone URL
+    SERVER_PROFILE_URL: "https://github.com/Roopika-G/IAM-Infra-Agent.git"
     SERVER_PROFILE_PATH: "helm/server-profile/instance"
     POSTGRES_JDBC_URL: "jdbc:postgresql://postgres.pingfederate.svc.cluster.local:5432/postgres"
     POSTGRES_JDBC_USERNAME: "postgres"
