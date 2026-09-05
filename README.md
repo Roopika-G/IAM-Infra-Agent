@@ -18,57 +18,43 @@ encrypted PingFederate values that can only be decrypted by the `pf.jwk` from
 the same running instance. Do not generate a new key or mix exports from
 different instances.
 
-1. Put these local-only files in `infrastructure/` (both are gitignored):
+| Step | What to do | Important detail |
+|---:|---|---|
+| 1 | Put `pingfederate.lic` and `pf.jwk` in `infrastructure/`. | Both files are gitignored. The `pf.jwk` must come from the same instance as the bulk export. |
+| 2 | Copy `.env.example` to `.env` and fill in all values. | The admin password must match the password in the exported configuration, or replication fails with HTTP 401. |
+| 3 | Put the export at `helm/server-profile/instance/bulk-config/data.json.subst`. | Use PostgreSQL placeholders; never commit the database password. |
+| 4 | Commit and push server-profile changes. | Pods clone the profile from Git, so they cannot see unpushed changes. |
+| 5 | Run `./deploy-all.sh` from the repository root. | It runs Terraform, PostgreSQL, and PingFederate in the correct order. |
+| 6 | Check pods and admin logs. | Both PF pods must be `1/1 Running`; bulk import and replication must return HTTP 200. |
 
-   - `pingfederate.lic` — the PingFederate license
-   - `pf.jwk` — the master key exported from the same instance as the bulk data
+Copy and configure the environment file:
 
-2. Copy the environment template and fill in all three values:
+```sh
+cp infrastructure/.env.example infrastructure/.env
+```
 
-   ```sh
-   cp infrastructure/.env.example infrastructure/.env
-   ```
+The PostgreSQL fields in `data.json.subst` must use:
 
-   `TF_VAR_pingfederate_admin_password` must match the password encrypted in
-   the exported administrative account. Otherwise bulk import can return 200,
-   but the following cluster replication call returns 401 and the container
-   exits.
+```text
+${POSTGRES_JDBC_URL}
+${POSTGRES_JDBC_USERNAME}
+${POSTGRES_JDBC_PASSWORD}
+```
 
-3. Keep the exported configuration at
-   `helm/server-profile/instance/bulk-config/data.json.subst`. PostgreSQL fields
-   must use these placeholders rather than committed credentials:
+Deploy everything:
 
-   ```text
-   ${POSTGRES_JDBC_URL}
-   ${POSTGRES_JDBC_USERNAME}
-   ${POSTGRES_JDBC_PASSWORD}
-   ```
+```sh
+./deploy-all.sh
+```
 
-4. Push server-profile changes before deploying. The containers clone the
-   profile from `SERVER_PROFILE_URL`, so an unpushed local change is invisible
-   to the pods.
+Verify the result:
 
-5. From the repository root, deploy in the required order:
-
-   ```sh
-   ./deploy-all.sh
-   ```
-
-   This applies Terraform first (including the license, master key, and admin
-   credential Secret), waits for PostgreSQL, then installs PingFederate.
-
-6. Verify readiness and successful import/replication:
-
-   ```sh
-   kubectl --context kind-self-healing-iam get pods -n pingfederate
-   kubectl --context kind-self-healing-iam logs -n pingfederate \
-     deployment/pingfederate-pingfederate-admin | \
-     grep -E 'bulk/import|cluster/replicate|CONTAINER FAILURE'
-   ```
-
-   Both PingFederate pods should be `1/1 Running`, and the admin log should
-   show HTTP 200 for both `/bulk/import` and `/cluster/replicate` with no
-   `CONTAINER FAILURE`.
+```sh
+kubectl --context kind-self-healing-iam get pods -n pingfederate
+kubectl --context kind-self-healing-iam logs -n pingfederate \
+  deployment/pingfederate-pingfederate-admin | \
+  grep -E 'bulk/import|cluster/replicate|CONTAINER FAILURE'
+```
 
 ## Deploy everything
 
@@ -127,17 +113,18 @@ Current pods you should see: `pingfederate-pingfederate-admin-*`,
 
 ### Where the admin-console password is stored
 
-The password is currently entered in plain text in the local,
-gitignored `infrastructure/.env` as `TF_VAR_pingfederate_admin_password`.
-Terraform copies it into the `pingfederate-license` Kubernetes Secret under
-the key `PING_IDENTITY_PASSWORD`, and the pods consume it through a
-`secretKeyRef`; it is not placed in the Helm ConfigMap or committed files.
+| Location | How it is stored | Committed to Git? |
+|---|---|---:|
+| `infrastructure/.env` | Plain text as `TF_VAR_pingfederate_admin_password` | No — gitignored |
+| Terraform state | Sensitive value, but present in the local state file | No — gitignored |
+| Kubernetes Secret `pingfederate-license` | Base64-encoded as `PING_IDENTITY_PASSWORD` | No |
+| PingFederate pods | Injected from the Secret using `secretKeyRef` | No |
+| Helm ConfigMap | Not stored here | No |
 
-Be aware that Kubernetes Secret data is only base64-encoded, not inherently
-encrypted, and Terraform records sensitive resource values in its local state.
-The `.env`, Terraform state, license, and `pf.jwk` are all gitignored, but they
-must still be protected as secrets. For this local kind environment, retrieve
-the current admin password with:
+Base64 is encoding, not encryption. Protect `.env`, Terraform state,
+`pingfederate.lic`, and `pf.jwk` as secrets even though they are gitignored.
+
+Retrieve the current admin password:
 
 ```sh
 kubectl --context kind-self-healing-iam -n pingfederate \
