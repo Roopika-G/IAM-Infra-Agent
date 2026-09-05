@@ -1236,6 +1236,9 @@ pingfederate-admin:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
       subPath: pingfederate.lic
+    - name: pf-license
+      mountPath: /opt/in/instance/server/default/data/pf.jwk
+      subPath: pf.jwk
 
   # SERVER_PROFILE_URL/PATH: git-based server profile (helm/server-profile/
   # in this same repo, once pushed to GitHub) — the container clones this
@@ -1400,6 +1403,9 @@ pingfederate-engine:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
       subPath: pingfederate.lic
+    - name: pf-license
+      mountPath: /opt/in/instance/server/default/data/pf.jwk
+      subPath: pf.jwk
 
   # SERVER_PROFILE_URL/PATH: same git-based server profile as
   # pingfederate-admin (see the comment there for why git over ConfigMap).

@@ -72,6 +72,7 @@ resource "kubernetes_secret" "pingfederate_license" {
 
   data = {
     "pingfederate.lic" = file(var.pingfederate_license_path)
+    "pf.jwk"           = file("${path.module}/pf.jwk")
   }
 
   type = "Opaque"

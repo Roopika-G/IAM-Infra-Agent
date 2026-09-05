@@ -11,5 +11,6 @@ infrastructure/crash.*.log
 # Local secrets / generated credentials
 infrastructure/.env
 infrastructure/pingfederate.lic
+infrastructure/pf.jwk
 infrastructure/*-config
 infrastructure/terraform.tfvars
