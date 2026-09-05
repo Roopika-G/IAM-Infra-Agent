@@ -71,8 +71,9 @@ resource "kubernetes_secret" "pingfederate_license" {
   }
 
   data = {
-    "pingfederate.lic" = file(var.pingfederate_license_path)
-    "pf.jwk"           = file(var.pingfederate_master_key_path)
+    "pingfederate.lic"       = file(var.pingfederate_license_path)
+    "pf.jwk"                 = file(var.pingfederate_master_key_path)
+    "PING_IDENTITY_PASSWORD" = var.pingfederate_admin_password
   }
 
   type = "Opaque"

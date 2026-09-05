@@ -28,6 +28,13 @@ variable "pingfederate_master_key_path" {
   default     = ""
 }
 
+variable "pingfederate_admin_password" {
+  description = "PingFederate administrator password used by startup configuration hooks. Pass via TF_VAR_pingfederate_admin_password — never commit it."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "admin_console_port" {
   description = "Host port the PingFederate admin console is reachable at (https://localhost:<this>)."
   type        = number

@@ -1214,6 +1214,11 @@ pingfederate-admin:
     # (infrastructure/main.tf) instead of a plaintext-readable ConfigMap.
     # URL/username are ConfigMap-backed, see envs: below.
     env:
+      - name: PING_IDENTITY_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: pingfederate-license
+            key: PING_IDENTITY_PASSWORD
       - name: POSTGRES_JDBC_PASSWORD
         valueFrom:
           secretKeyRef:
@@ -1386,6 +1391,11 @@ pingfederate-engine:
     # (infrastructure/main.tf) instead of a plaintext-readable ConfigMap.
     # URL/username are ConfigMap-backed, see envs: below.
     env:
+      - name: PING_IDENTITY_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: pingfederate-license
+            key: PING_IDENTITY_PASSWORD
       - name: POSTGRES_JDBC_PASSWORD
         valueFrom:
           secretKeyRef:
