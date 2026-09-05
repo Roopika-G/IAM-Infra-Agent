@@ -22,6 +22,12 @@ variable "pingfederate_license_path" {
   default     = ""
 }
 
+variable "pingfederate_master_key_path" {
+  description = "Absolute local path to the matching PingFederate pf.jwk file. Pass via TF_VAR_pingfederate_master_key_path — never commit the key itself."
+  type        = string
+  default     = ""
+}
+
 variable "admin_console_port" {
   description = "Host port the PingFederate admin console is reachable at (https://localhost:<this>)."
   type        = number
