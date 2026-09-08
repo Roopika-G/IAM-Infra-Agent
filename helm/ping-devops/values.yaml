@@ -1197,12 +1197,16 @@ configMaps:
   fluent-bit-config:
     data:
       parsers.conf: |
+        # No Time_Key/Time_Format here deliberately: PF's timestamp ends in
+        # a literal "Z" (Java's XX pattern for UTC), which Fluent Bit's
+        # strptime-based %z does not accept (it wants a numeric offset like
+        # +0000) — every record silently failed time-parsing under the
+        # original config. Letting Fluent Bit use its own ingestion time
+        # instead avoids the whole strptime-format minefield; PF's own
+        # timestamp field is still fully intact inside the data column.
         [PARSER]
             Name         json_pf
             Format       json
-            Time_Key     timestamp
-            Time_Format  %Y-%m-%dT%H:%M:%S.%L%z
-            Time_Keep    On
 
         [PARSER]
             Name         init_pf
