@@ -131,6 +131,16 @@ Revised: no `agent/dump_evidence.py`, no pre-built "evidence bundle" concept for
 
 Note for Phase 14: the eval harness still needs *frozen* test fixtures (live tool calls aren't reproducible for offline testing), so a small dev-time snapshot script may reappear there — but only as an occasional fixture-generation utility, never as something that runs during a real incident. Decide that shape when Phase 14 actually starts, not now.
 
+## Immediate next steps (actual execution order, not the same as the phase numbering below)
+
+The 16 phases above are the full eventual build order. Day-to-day execution has diverged from that numbering in one deliberate way, agreed on directly rather than by re-deriving it from the phase list — worth writing down so it isn't only in chat history:
+
+1. **Trigger Sim A for real and confirm detection catches it, with a minimal UI** — pulls a thin slice of Phase 13's UI forward, scoped to just this one simulation (inject the `SERVER_PROFILE_PATH` fault, watch a new row land in `agent.incidents`). Not the full dashboard/incident-timeline/approval-gate UI Phase 13 eventually needs — just enough to see Sim A work end-to-end without reading raw SQL every time.
+2. **Then Phase 7** — vectorize `knowledge/golden-architecture.md` into `agent.agent_knowledge`, and seed `agent.config_baseline` from `helm/ping-devops/values.yaml`.
+3. **Then Phase 8** — the actual LangGraph diagnosis agent.
+
+Phases 9 onward (PR creation, SPIFFE/authorization, CI/CD deploy, the full UI, policy, incident-history, eval) stay in their existing numbered order after that — this reordering only affects what happens immediately next, not the long-run sequence.
+
 ## Phase 7 — `agent_knowledge` (vector) + `config_baseline` (exact) tables + hybrid retrieval
 
 Revised further, worked out in detail during a dedicated design pass (not just at Phase-7 time — `knowledge/golden-architecture.md` was drafted early, ahead of this phase, because Sim A work needed it sooner): agent-knowledge is not one table, it's two, doing two different jobs, populated and queried differently.
