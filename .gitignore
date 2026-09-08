@@ -1,5 +1,11 @@
 .DS_Store
 
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
 # Terraform
 infrastructure/.terraform/
 infrastructure/terraform.tfstate

@@ -35,28 +35,41 @@ CREATE TABLE IF NOT EXISTS public.pf_logs_raw (
     data JSONB
 );
 
--- pf_logs: normalized output of Phase 5's detector.py, never written by
--- Fluent Bit directly (see plan.md Phase 4/5 — Fluent Bit's pgsql output
--- can't do hashing/regex extraction reliably, so that work happens here in
--- Python against pf_logs_raw instead). No FK back to pf_logs_raw (it has
--- no id column to reference — see above); Phase 5 tracks ingest progress
--- via a time high-water-mark instead of a processed flag.
-CREATE TABLE IF NOT EXISTS agent.pf_logs (
-    id               BIGSERIAL PRIMARY KEY,
-    event_time       TIMESTAMPTZ NOT NULL,
-    log_type         TEXT NOT NULL,   -- derived from pf_logs_raw.tag, e.g. 'server', 'admin_api', 'init'
-    pf_role          TEXT NOT NULL,   -- derived from pf_logs_raw.tag, e.g. 'admin', 'engine'
-    namespace        TEXT,
-    pod_name         TEXT,
-    severity         TEXT,
-    logger           TEXT,
-    thread           TEXT,
-    message          TEXT,
-    exception_type   TEXT,
-    exception_message TEXT,
-    stack_trace      TEXT,
-    tracking_id      TEXT,
-    error_signature  TEXT
+-- No separate normalized "pf_logs" table — deliberately cut (see plan.md
+-- Phase 5). Extraction/signature computation happens transiently in Python
+-- (agent/detector.py) against pf_logs_raw directly; only the *result*
+-- (a fingerprint + one representative sample) gets persisted, on
+-- agent.incidents below. Nothing pre-fetched or pre-bundled beyond that —
+-- the live agent (Phase 8) pulls any further context it needs itself via
+-- MCP tools, on demand, rather than from a pre-built copy of everything.
+
+-- ingest_cursor: single-row bookmark so detector.py never rescans
+-- pf_logs_raw from the beginning. The `id boolean primary key default
+-- true check (id)` trick is a standard Postgres way to enforce exactly one
+-- row. Advanced in the same transaction as the incidents it produces (see
+-- detector.py) so a crash mid-batch can never skip unprocessed rows.
+CREATE TABLE IF NOT EXISTS agent.ingest_cursor (
+    id             BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+    last_seen_time TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT 'epoch'
 );
-CREATE INDEX IF NOT EXISTS pf_logs_error_signature_idx ON agent.pf_logs (error_signature);
-CREATE INDEX IF NOT EXISTS pf_logs_event_time_idx ON agent.pf_logs (event_time);
+INSERT INTO agent.ingest_cursor (id) VALUES (true) ON CONFLICT DO NOTHING;
+
+-- incidents: one row per deduplicated fault. The partial unique index is
+-- what actually enforces "one open incident per fingerprint" — dedup logic
+-- lives in the database constraint, not just application code, so a bug in
+-- detector.py can't silently create duplicates.
+CREATE TABLE IF NOT EXISTS agent.incidents (
+    id               BIGSERIAL PRIMARY KEY,
+    fingerprint      TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'NEW',
+    log_type         TEXT,             -- from pf_logs_raw.tag, e.g. 'server', 'init'
+    pf_role          TEXT,             -- from pf_logs_raw.tag, e.g. 'admin', 'engine'
+    logger           TEXT,
+    exception_type   TEXT,
+    sample_message   TEXT,             -- one representative full message, not truncated
+    first_seen       TIMESTAMPTZ NOT NULL,
+    last_seen        TIMESTAMPTZ NOT NULL,
+    occurrence_count INTEGER NOT NULL DEFAULT 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS incidents_open_fingerprint_idx
+    ON agent.incidents (fingerprint) WHERE status NOT IN ('RESOLVED', 'FAILED');
