@@ -135,8 +135,8 @@ Note for Phase 14: the eval harness still needs *frozen* test fixtures (live too
 
 The 16 phases above are the full eventual build order. Day-to-day execution has diverged from that numbering in one deliberate way, agreed on directly rather than by re-deriving it from the phase list — worth writing down so it isn't only in chat history:
 
-1. **Trigger Sim A for real and confirm detection catches it, with a minimal UI** — pulls a thin slice of Phase 13's UI forward, scoped to just this one simulation (inject the `SERVER_PROFILE_PATH` fault, watch a new row land in `agent.incidents`). Not the full dashboard/incident-timeline/approval-gate UI Phase 13 eventually needs — just enough to see Sim A work end-to-end without reading raw SQL every time.
-2. **Then Phase 7** — vectorize `knowledge/golden-architecture.md` into `agent.agent_knowledge`, and seed `agent.config_baseline` from `helm/ping-devops/values.yaml`.
+1. **Phase 7 first** — vectorize `knowledge/golden-architecture.md` into `agent.agent_knowledge`, and seed `agent.config_baseline` from `helm/ping-devops/values.yaml`. Reordered ahead of Sim A/UI on request.
+2. **Then trigger Sim A for real and confirm detection catches it, with a minimal UI** — pulls a thin slice of Phase 13's UI forward, scoped to just this one simulation (inject the `SERVER_PROFILE_PATH` fault, watch a new row land in `agent.incidents`). Not the full dashboard/incident-timeline/approval-gate UI Phase 13 eventually needs — just enough to see Sim A work end-to-end without reading raw SQL every time.
 3. **Then Phase 8** — the actual LangGraph diagnosis agent.
 
 Phases 9 onward (PR creation, SPIFFE/authorization, CI/CD deploy, the full UI, policy, incident-history, eval) stay in their existing numbered order after that — this reordering only affects what happens immediately next, not the long-run sequence.

@@ -73,3 +73,43 @@ CREATE TABLE IF NOT EXISTS agent.incidents (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS incidents_open_fingerprint_idx
     ON agent.incidents (fingerprint) WHERE status NOT IN ('RESOLVED', 'FAILED');
+
+-- agent_knowledge: narrative/explanatory RAG content ONLY (invariants,
+-- traps, "why") — never exact config values, those don't belong in a
+-- vector-similarity table at all (see config_baseline below). One row per
+-- atomic fact, chunked on knowledge/golden-architecture.md's `###`
+-- headings by search/ingest.py, not per whole document. 384 dims to match
+-- agent/embeddings.py's BAAI/bge-small-en-v1.5. No ANN index (ivfflat/
+-- hnsw) — at a few dozen rows, brute-force `ORDER BY content_vector <=>
+-- query` is instant and exact; add one only if this corpus ever grows into
+-- the thousands, which it won't at this project's scale.
+CREATE TABLE IF NOT EXISTS agent.agent_knowledge (
+    id             BIGSERIAL PRIMARY KEY,
+    doc_id         TEXT NOT NULL,
+    title          TEXT NOT NULL,
+    content        TEXT NOT NULL,
+    content_tsv    TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
+    content_vector VECTOR(384),
+    related_keys   TEXT[] NOT NULL DEFAULT '{}',
+    content_hash   TEXT NOT NULL,  -- so re-running ingest.py skips unchanged chunks
+    UNIQUE (doc_id, title)
+);
+CREATE INDEX IF NOT EXISTS agent_knowledge_tsv_idx ON agent.agent_knowledge USING gin (content_tsv);
+
+-- config_baseline: exact key/value facts, looked up by exact key match —
+-- never by similarity search (see the golden-architecture.md doc's own
+-- explanation of why: a port number or path string has almost no
+-- exploitable semantic content, and vector search can rank two different
+-- literal values as "close"). FROZEN once seeded — search/seed_baseline.py
+-- populates this once from a known-good values.yaml; it must never be
+-- auto-resynced on every push, or it could never disagree with a bad
+-- commit and drift detection becomes impossible by construction. The only
+-- legitimate way this table changes after seeding is a deliberate
+-- re-baseline once a real fix is verified (see plan.md Phase 10/12).
+CREATE TABLE IF NOT EXISTS agent.config_baseline (
+    key          TEXT PRIMARY KEY,
+    golden_value TEXT NOT NULL,
+    source_file  TEXT NOT NULL,
+    captured_sha TEXT NOT NULL,
+    verified_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
