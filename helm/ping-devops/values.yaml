@@ -1072,16 +1072,84 @@ global:
 # @param    sidecars Sidecar yaml definitions available to product workload spec
 # @default  {}
 #############################################################
-sidecars: {}
-# Example:
-# sidecars:
-#   logger:
-#     name: log-container
-#     image: pingidentity/pingtoolkit:2607
-#     volumeMounts:
-#       - mountPath: /tmp/logs/
-#         name: logger
-#         readOnly: false
+# Two near-identical entries (not one shared entry) because includeSidecars:
+# injects a container spec verbatim with no per-product override — PF_ROLE
+# has to differ, so the container spec has to be defined twice. Referenced
+# via pingfederate-admin.includeSidecars / pingfederate-engine.includeSidecars
+# below. Image pinned to an exact tag deliberately, not `latest`.
+sidecars:
+  pf-fluent-bit-admin:
+    name: fluent-bit
+    image: fluent/fluent-bit:3.2.2
+    imagePullPolicy: IfNotPresent
+    env:
+      - name: PF_ROLE
+        value: "admin"
+      - name: POD_NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      - name: POSTGRES_JDBC_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: postgres-credentials
+            key: POSTGRES_JDBC_PASSWORD
+    volumeMounts:
+      - name: out-dir
+        mountPath: /opt/out
+        readOnly: true
+      - name: fluent-bit-state
+        mountPath: /fluent-bit/state
+      - name: fluent-bit-config
+        mountPath: /fluent-bit/etc
+        readOnly: true
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+  pf-fluent-bit-engine:
+    name: fluent-bit
+    image: fluent/fluent-bit:3.2.2
+    imagePullPolicy: IfNotPresent
+    env:
+      - name: PF_ROLE
+        value: "engine"
+      - name: POD_NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      - name: POSTGRES_JDBC_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: postgres-credentials
+            key: POSTGRES_JDBC_PASSWORD
+    volumeMounts:
+      - name: out-dir
+        mountPath: /opt/out
+        readOnly: true
+      - name: fluent-bit-state
+        mountPath: /fluent-bit/state
+      - name: fluent-bit-config
+        mountPath: /fluent-bit/etc
+        readOnly: true
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
 
 #############################################################
 # InitContainer Definitions
@@ -1104,11 +1172,13 @@ initContainers: {}
 # @desc     for sidecars, initContainers, or main product containers
 # @default  {}
 #############################################################
-volumes: {}
-# Examples:
-# volumes:
-#   logger:
-#     emptyDir: {}
+# fluent-bit-config: the Fluent Bit sidecar's own config, shared identically
+# by pingfederate-admin and pingfederate-engine via includeVolumes: below.
+# Mounted read-only into the sidecar only, never into the main PF container.
+volumes:
+  fluent-bit-config:
+    configMap:
+      name: fluent-bit-config
 
 #############################################################
 # ConfigMap Definitions
@@ -1117,14 +1187,85 @@ volumes: {}
 # @desc     for sidecars or main product containers
 # @default  {}
 #############################################################
-configMaps: {}
-# Example:
-# configMaps:
-#   pingdirectory-backup:
-#     data:
-#       backup.sh: |-
-#         #!/bin/sh
-#         ...
+# fluent-bit-config: fluent-bit.conf / parsers.conf for the pf-fluent-bit-admin
+# / pf-fluent-bit-engine sidecars defined under sidecars: below. Tails
+# server-json.log / admin-api-json.log / init.log from the shared out-dir
+# volume and writes to Postgres via the pgsql output plugin, landing in
+# agent.pf_logs_raw (Fluent Bit's own fixed tag/time/data(jsonb) schema —
+# Phase 5's detector normalizes into agent.pf_logs from there; see db/init.sql).
+configMaps:
+  fluent-bit-config:
+    data:
+      parsers.conf: |
+        [PARSER]
+            Name         json_pf
+            Format       json
+            Time_Key     timestamp
+            Time_Format  %Y-%m-%dT%H:%M:%S.%L%z
+            Time_Keep    On
+
+        [PARSER]
+            Name         init_pf
+            Format       regex
+            Regex        ^(?<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) (?<message>.*)$
+            Time_Key     time
+            Time_Format  %Y-%m-%d %H:%M:%S,%L
+            Time_Keep    On
+      fluent-bit.conf: |
+        [SERVICE]
+            Flush         1
+            Log_Level     info
+            Parsers_File  /fluent-bit/etc/parsers.conf
+            storage.path  /fluent-bit/state
+
+        [INPUT]
+            Name              tail
+            Tag               pf.server.${PF_ROLE}
+            Path              /opt/out/instance/log/server-json.log
+            Parser            json_pf
+            DB                /fluent-bit/state/server-json.db
+            Skip_Long_Lines   On
+            Refresh_Interval  5
+
+        [INPUT]
+            Name              tail
+            Tag               pf.admin_api.${PF_ROLE}
+            Path              /opt/out/instance/log/admin-api-json.log
+            Parser            json_pf
+            DB                /fluent-bit/state/admin-api-json.db
+            Skip_Long_Lines   On
+            Refresh_Interval  5
+
+        [INPUT]
+            Name              tail
+            Tag               pf.init.${PF_ROLE}
+            Path              /opt/out/instance/log/init.log
+            Parser            init_pf
+            DB                /fluent-bit/state/init.db
+            Skip_Long_Lines   On
+            Refresh_Interval  5
+
+        # Sidecar, not DaemonSet: this pod already knows its own identity via
+        # downward-API env vars, so a record_modifier is the right tool here
+        # — no Kubernetes filter / API-server metadata lookup needed (that's
+        # the DaemonSet pattern, reading /var/log/containers node-wide).
+        [FILTER]
+            Name      record_modifier
+            Match     pf.*
+            Record    pf_role ${PF_ROLE}
+            Record    namespace ${POD_NAMESPACE}
+            Record    pod_name ${POD_NAME}
+
+        [OUTPUT]
+            Name       pgsql
+            Match      pf.*
+            Host       postgres
+            Port       5432
+            User       postgres
+            Password   ${POSTGRES_JDBC_PASSWORD}
+            Database   postgres
+            Table      agent.pf_logs_raw
+            Timestamp_Key ts
 
 #############################################################
 # @section Image/Product values
@@ -1233,10 +1374,27 @@ pingfederate-admin:
   # Mounts the pingfederate-license secret (created by infrastructure/main.tf
   # from a local .lic file) at the exact path PingFederate checks for an
   # existing license, so it skips the devops-secret evaluation-license flow.
+  #
+  # out-dir / fluent-bit-state: not auto-created here — the chart only
+  # auto-creates out-dir when utilitySidecar.enabled is true (see
+  # templates/pinglib/_workload.tpl), which we deliberately don't want (it
+  # drags in an unrelated tail container). Declared by hand instead, same
+  # pattern as pf-license. out-dir is PF's actual /opt/out — mounted
+  # read-write here (PF writes it), read-only into the pf-fluent-bit-admin
+  # sidecar (see sidecars: above). fluent-bit-state holds only the
+  # sidecar's own tail-offset DBs, never touched by the PF container.
   volumes:
     - name: pf-license
       secret:
         secretName: pingfederate-license
+    - name: out-dir
+      emptyDir: {}
+    - name: fluent-bit-state
+      emptyDir: {}
+  includeVolumes:
+    - fluent-bit-config
+  includeSidecars:
+    - pf-fluent-bit-admin
   volumeMounts:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
@@ -1244,6 +1402,8 @@ pingfederate-admin:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/data/pf.jwk
       subPath: pf.jwk
+    - name: out-dir
+      mountPath: /opt/out
 
   # SERVER_PROFILE_URL/PATH: git-based server profile (helm/server-profile/
   # in this same repo, once pushed to GitHub) — the container clones this
@@ -1405,10 +1565,21 @@ pingfederate-engine:
   # The engine runs its own local license check at startup (it doesn't just
   # inherit the license via cluster sync), so it needs the same
   # pingfederate-license secret mounted as pingfederate-admin does.
+  #
+  # out-dir / fluent-bit-state / includeVolumes / includeSidecars: same
+  # reasoning as pingfederate-admin above — see that block's comment.
   volumes:
     - name: pf-license
       secret:
         secretName: pingfederate-license
+    - name: out-dir
+      emptyDir: {}
+    - name: fluent-bit-state
+      emptyDir: {}
+  includeVolumes:
+    - fluent-bit-config
+  includeSidecars:
+    - pf-fluent-bit-engine
   volumeMounts:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/conf/pingfederate.lic
@@ -1416,6 +1587,8 @@ pingfederate-engine:
     - name: pf-license
       mountPath: /opt/in/instance/server/default/data/pf.jwk
       subPath: pf.jwk
+    - name: out-dir
+      mountPath: /opt/out
 
   # SERVER_PROFILE_URL/PATH: same git-based server profile as
   # pingfederate-admin (see the comment there for why git over ConfigMap).

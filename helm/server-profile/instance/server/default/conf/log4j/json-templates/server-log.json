@@ -1,0 +1,45 @@
+{
+  "timestamp": {
+    "$resolver": "timestamp",
+    "pattern": {
+      "format": "yyyy-MM-dd'T'HH:mm:ss.SSSXX"
+    }
+  },
+  "trackingId": {
+    "$resolver": "mdc",
+    "key": "trackingid",
+    "stringified": true
+  },
+  "level": {
+    "$resolver": "level",
+    "field": "name"
+  },
+  "logger": {
+    "$resolver": "logger",
+    "field": "name"
+  },
+  "thread": {
+    "$resolver": "thread",
+    "field": "name"
+  },
+  "message": {
+    "$resolver": "message",
+    "stringified": true
+  },
+  "exceptionClassName": {
+    "$resolver": "exception",
+    "field": "className"
+  },
+  "exceptionMessage": {
+    "$resolver": "exception",
+    "field": "message",
+    "stringified": true
+  },
+  "exceptionStackTrace": {
+    "$resolver": "exception",
+    "field": "stackTrace",
+    "stackTrace": {
+      "stringified": true
+    }
+  }
+}
