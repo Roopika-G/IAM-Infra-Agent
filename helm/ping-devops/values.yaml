@@ -1218,6 +1218,13 @@ configMaps:
             Parsers_File  /fluent-bit/etc/parsers.conf
             storage.path  /fluent-bit/state
 
+        # Read_From_Head On on every INPUT below: tail defaults to reading
+        # only new lines from the point it starts watching. Without this, a
+        # fast crash-loop could write its one diagnostic line and restart
+        # the pod again before this sidecar's tail input catches up,
+        # silently losing exactly the log line Phase 5's detector needs.
+        # Confirmed hitting this in practice: init.log's one-time startup
+        # burst was invisible without it.
         [INPUT]
             Name              tail
             Tag               pf.server.${PF_ROLE}
@@ -1225,6 +1232,7 @@ configMaps:
             Parser            json_pf
             DB                /fluent-bit/state/server-json.db
             Skip_Long_Lines   On
+            Read_From_Head    On
             Refresh_Interval  5
 
         [INPUT]
@@ -1234,6 +1242,7 @@ configMaps:
             Parser            json_pf
             DB                /fluent-bit/state/admin-api-json.db
             Skip_Long_Lines   On
+            Read_From_Head    On
             Refresh_Interval  5
 
         [INPUT]
@@ -1243,6 +1252,7 @@ configMaps:
             Parser            init_pf
             DB                /fluent-bit/state/init.db
             Skip_Long_Lines   On
+            Read_From_Head    On
             Refresh_Interval  5
 
         # Sidecar, not DaemonSet: this pod already knows its own identity via
