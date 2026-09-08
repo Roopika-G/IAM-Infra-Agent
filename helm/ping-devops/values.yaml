@@ -1270,6 +1270,14 @@ configMaps:
             Record    namespace ${POD_NAMESPACE}
             Record    pod_name ${POD_NAME}
 
+        # Table is bare, no schema prefix, deliberately: the plugin wraps
+        # this value in one pair of double quotes as a single literal
+        # identifier rather than splitting on "." — "agent.pf_logs_raw"
+        # here would create/target a table literally named that (dot
+        # included) in the public schema, not schema agent table
+        # pf_logs_raw. Confirmed live via pg_stat_activity, not assumed.
+        # See db/init.sql for the full explanation and the resulting
+        # public.pf_logs_raw table definition (public schema, not agent).
         [OUTPUT]
             Name       pgsql
             Match      pf.*
@@ -1278,7 +1286,7 @@ configMaps:
             User       postgres
             Password   ${POSTGRES_JDBC_PASSWORD}
             Database   postgres
-            Table      agent.pf_logs_raw
+            Table      pf_logs_raw
             Timestamp_Key ts
 
 #############################################################

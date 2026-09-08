@@ -14,30 +14,35 @@ CREATE SCHEMA IF NOT EXISTS agent;
 
 -- pf_logs_raw: written directly by the Fluent Bit sidecars' pgsql output
 -- plugin (helm/ping-devops/values.yaml's fluent-bit-config ConfigMap).
--- Confirmed against the plugin's real behavior, not assumed: it always
--- creates/writes a fixed tag/time/data(jsonb) shape and cannot target
--- arbitrary custom columns — record_modifier fields (pf_role, namespace,
--- pod_name) end up INSIDE `data`, not as separate SQL columns. id and
--- processed are ours, added on top; Fluent Bit's own `CREATE TABLE IF NOT
--- EXISTS` only ever references tag/time/data, so pre-creating with extra
--- columns (with defaults) here is safe and never fought over.
-CREATE TABLE IF NOT EXISTS agent.pf_logs_raw (
-    id        BIGSERIAL PRIMARY KEY,
-    tag       TEXT,
-    time      TIMESTAMP WITHOUT TIME ZONE,
-    data      JSONB,
-    processed BOOLEAN NOT NULL DEFAULT false
+-- Deliberately in the public schema, NOT agent — confirmed live (not
+-- assumed) that the plugin's `Table` config value is never split on ".",
+-- it's wrapped in one pair of double quotes as a single literal
+-- identifier. A `Table agent.pf_logs_raw` config value therefore does NOT
+-- target schema `agent` table `pf_logs_raw` — it creates/targets a table
+-- literally NAMED "agent.pf_logs_raw" (dot and all) in whatever schema is
+-- first in the connecting role's search_path (public, by default). Only a
+-- bare, unqualified name here actually works.
+--
+-- Exactly 3 columns, nothing more: the plugin's own generated INSERT is
+-- positional with no explicit column list (`INSERT INTO t SELECT tag,
+-- time, data FROM ...`), hard-coded to those 3 values. Adding id/processed
+-- columns — the original plan here — silently breaks every future insert
+-- with a column-count mismatch. Confirmed by capturing the live query in
+-- pg_stat_activity before assuming otherwise.
+CREATE TABLE IF NOT EXISTS public.pf_logs_raw (
+    tag  TEXT,
+    time TIMESTAMP WITHOUT TIME ZONE,
+    data JSONB
 );
-CREATE INDEX IF NOT EXISTS pf_logs_raw_unprocessed_idx
-    ON agent.pf_logs_raw (id) WHERE NOT processed;
 
 -- pf_logs: normalized output of Phase 5's detector.py, never written by
 -- Fluent Bit directly (see plan.md Phase 4/5 — Fluent Bit's pgsql output
 -- can't do hashing/regex extraction reliably, so that work happens here in
--- Python against pf_logs_raw instead).
+-- Python against pf_logs_raw instead). No FK back to pf_logs_raw (it has
+-- no id column to reference — see above); Phase 5 tracks ingest progress
+-- via a time high-water-mark instead of a processed flag.
 CREATE TABLE IF NOT EXISTS agent.pf_logs (
     id               BIGSERIAL PRIMARY KEY,
-    raw_log_id       BIGINT REFERENCES agent.pf_logs_raw(id),
     event_time       TIMESTAMPTZ NOT NULL,
     log_type         TEXT NOT NULL,   -- derived from pf_logs_raw.tag, e.g. 'server', 'admin_api', 'init'
     pf_role          TEXT NOT NULL,   -- derived from pf_logs_raw.tag, e.g. 'admin', 'engine'
