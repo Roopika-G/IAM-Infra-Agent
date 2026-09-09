@@ -17,15 +17,14 @@ for the full project plan and current status.
 
 ## First-time setup (cloning this repo fresh)
 
-1. Prerequisites above, then `cp infrastructure/.env.example infrastructure/.env` and fill it in (see "Starting healthy PingFederate pods" below).
-2. `./deploy-all.sh` — one command for the whole cluster: kind (Terraform) → Postgres + schema (`deploy-platform.sh`, applies `db/init.sql`) → PingFederate (`deploy-helm.sh`).
-3. `uv sync` — installs the Python environment into `.venv` (`agent/`, `search/`, `tests/`). First run of `search/ingest.py` also downloads a small (~130MB) local embedding model, one-time.
-4. Seed the two Postgres-side pieces the agent needs — both one-time:
-   ```sh
-   export AGENT_DB_DSN="postgresql://postgres:$(kubectl -n pingfederate get secret postgres-credentials -o jsonpath='{.data.POSTGRES_JDBC_PASSWORD}' | base64 -d)@localhost:5432/postgres"
-   uv run python search/seed_baseline.py   # freezes the known-good config baseline
-   uv run python search/ingest.py          # embeds knowledge/golden-architecture.md
-   ```
+1. Prerequisites above, then `cp infrastructure/.env.example infrastructure/.env` and fill it in (see "Starting healthy PingFederate pods" below) — the one step that can't be scripted, since it needs your own license/jwk paths and admin password.
+2. `./setup.sh` — everything else, one command:
+   - `deploy-all.sh` (kind cluster → Postgres + schema → PingFederate)
+   - `uv sync` (Python env — first run of `search/ingest.py` also downloads a small (~130MB) local embedding model, one-time)
+   - `search/seed_baseline.py` (freezes the known-good config baseline)
+   - `search/ingest.py` (embeds `knowledge/golden-architecture.md`)
+
+Safe to rerun any time — every step it calls is idempotent (`seed_baseline.py` only adds keys not already frozen; `ingest.py` only re-embeds chunks that actually changed). One side effect worth knowing: it always restarts both PF pods, since `deploy-helm.sh` unconditionally forces a rollout restart regardless of whether anything actually changed.
 
 After this, `agent.incidents`, `agent.config_baseline`, and `agent.agent_knowledge` are all live in Postgres — see "What to rerun when you change things" below for ongoing work.
 
@@ -225,6 +224,7 @@ search/
   baseline.py               exact-key lookup against config_baseline
 tests/                Python tests (pytest)
 pyproject.toml        Python deps, managed with uv
+setup.sh              First-time setup: deploy-all.sh + uv sync + seed_baseline.py + ingest.py
 deploy-all.sh         Full deploy: terraform + platform + PF
 deploy-platform.sh    Postgres only
 deploy-helm.sh        PingFederate only
