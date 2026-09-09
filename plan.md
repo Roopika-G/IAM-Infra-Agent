@@ -131,13 +131,21 @@ Both faults below were triggered for real against the cluster (corrupted a value
 
 **Sim A is now implemented as code, not just a manual test:** `Error_Simulation/sim_a_jdbc_url.sh inject|restore` — corrupts/restores `POSTGRES_JDBC_URL` in both `pingfederate-admin`/`pingfederate-engine`, then runs `deploy-helm.sh`. Matches the exact corruption manually verified above. Built and pushed; **deliberately not executed as part of building it** — PF stays healthy until it's deliberately run.
 
-## Phase 6 — diagnostics + health MCP servers (no evidence-bundle CLI)
+## Phase 6 — MCP servers, grouped by underlying system (no evidence-bundle CLI)
 
 Revised: no `agent/dump_evidence.py`, no pre-built "evidence bundle" concept for the live flow — cut entirely, not deferred. The whole point of giving the agent tools is so *it* decides what to investigate; pre-fetching pod status/events/diffs into a bundle before the agent even looks at anything does the agent's own job for it, probably fetches things it doesn't need for that specific case, and goes stale between assembly and use. `agent.incidents` (Phase 5) already carries enough to start from — fingerprint, occurrence count, one sample message. Everything else in this phase is read-only tools the live agent calls itself, on demand, during Phase 8's graph nodes.
 
-**Deliverables:** `mcp_servers/diagnostics/server.py` (read-only: `get_logs_window` — bounded excerpt only, never the whole stream — `get_pod_status`, `get_events`, `repo_diff` against a golden ref); `mcp_servers/health/server.py` (replica readiness, last Helm revision, health-probe check).
+Revised again, worked out in a dedicated design pass: servers are grouped by **which underlying system they talk to**, not by semantic category — `get_pod_status`/`get_events` and a Helm-revision check are all Kubernetes-API reads, so they live in one server, not two (the originally-planned separate `health` server folded in here). This is also what keeps the tool set genuinely generic rather than growing a new bespoke tool per failure type: a future fault reveals itself through one of a small number of observable-state *categories* (logs, pod status, live config, a git diff), never through something specific to that fault — so as long as tools are organized by category instead of by failure, a brand-new fault needs a new *simulation script*, never a new *tool*. Every parameter across all of these is generic (pod name, key name, query text) — nothing here is JDBC-specific or Sim-A-specific.
+
+**Deliverables:**
+- `mcp_servers/kubernetes/server.py` — read-only: `get_pod_status` (Ready state, restart count, container exit reasons), `get_events`, `get_live_config_value` (a pod's actual running env var value — needed for any future reconciliation-style check, e.g. the deferred `SERVER_PROFILE_PATH` trap), replica readiness / last Helm revision (folded in from the original `health` server concept).
+- `mcp_servers/git/server.py` — read-only: `repo_diff` against a golden ref, read a file at a specific ref. Kept strictly separate from Phase 9's `repo_config` server, which is the one **write**-capable tool (produces a diff on an unpushed branch, never auto-pushed) — read and write live in different servers on purpose, not different modes of the same one.
+- `mcp_servers/logs/server.py` — read-only: `get_logs` reads `public.pf_logs_raw` directly (the *only* log storage — `agent.pf_logs` was cut entirely, see Phase 5), not the live k8s API. Kept separate from the `kubernetes` server because it talks to Postgres, not the k8s API — different system underneath, even though both are "reads."
+- `mcp_servers/knowledge/server.py` — read-only: `search_vector` (wraps `search/query.py`'s hybrid search) and `search_config_baseline` (wraps `search/baseline.py`'s exact lookup) — two distinct tools in one server, same reasoning as why those two files stayed separate in Phase 7 (same table+same question vs. different table+different question — see Phase 7's `baseline.py` note).
 
 **Exit criteria:** each tool, called directly (not yet through the graph), returns correct bounded output against a real open incident from Phase 5.
+
+**Enforcement note, not yet real infrastructure:** the read/write split above is the actual safety boundary for now — the agent is simply never handed a tool capable of writing directly, so "no unapproved writes" holds structurally even before Phase 11's SPIFFE/SPIRE exists to enforce it cryptographically. SPIFFE doesn't change this boundary later, it just adds verified-identity enforcement on top of a boundary that already exists from day one (see Phase 11's note on what SPIFFE is actually for — authentication and authorization, not primarily logging).
 
 Note for Phase 14: the eval harness still needs *frozen* test fixtures (live tool calls aren't reproducible for offline testing), so a small dev-time snapshot script may reappear there — but only as an occasional fixture-generation utility, never as something that runs during a real incident. Decide that shape when Phase 14 actually starts, not now.
 
@@ -174,11 +182,15 @@ Embeddings: local, not a hosted API — `agent/embeddings.py` uses `BAAI/bge-sma
 
 ## Phase 8 — LangGraph diagnosis loop (read-only) — first demo milestone
 
+**The agent is generic; only the trigger is narrow, and deliberately so.** The graph, prompts, tools, and `Diagnosis` schema below are written to reason from whatever evidence they're handed — none of it assumes or hardcodes "this is a JDBC error." The one JDBC-specific thing in the whole system is a narrow allowlist check in `agent/detector.py` (see below), which decides *when* to invoke the agent at all — a deliberate, temporary safety gate, not a limitation of the agent's design. It exists because only one fault (Sim A) has been validated end-to-end so far, and firing an untested agent on an untested failure type is a worse first step than fixing the trigger condition once more faults are validated. Expanding scope later means loosening that one `if` in `detector.py` — never touching the graph, prompts, or tools.
+
+**Trigger design:** `detector.py`, on creating or updating an incident, checks it against a small allowlist (e.g. `logger == 'org.sourceid.saml20.domain.mgmt.impl.DataSourceManagerImpl'` or message containing `"data source instance"` — the known Sim A signature). On a match, it invokes the agent, passing the **exact raw log content** from `public.pf_logs_raw` (the real `data` JSONB — not the truncated `sample_message`, not just the fingerprint) as the starting evidence. If the agent needs more context than that one line, it calls `get_logs` (Phase 6, `mcp_servers/logs/server.py`) — which reads `pf_logs_raw` directly, since that's the only log storage that exists (`agent.pf_logs` was cut entirely — see Phase 5).
+
 **Deliverables:** `agent/schemas.py` (`Diagnosis` Pydantic model with `failure_class, root_cause, confidence, supporting_evidence_ids, needs_more_evidence`); `agent/llm.py` (provider-abstracted LLM client, env driven, targeting a hosted LLM API with a user-supplied key — not a local model — create root `.env.example` here, since only `infrastructure/.env.example` exists today); `agent/graph.py` + `agent/nodes/{triage,retrieve,compare}.py` implementing TRIAGE→RETRIEVE→COMPARE→DIAGNOSE, read-tools-only, bounded loop, single retry below confidence threshold then escalate.
 
-Node/table routing is fixed by topology, not chosen by the LLM: RETRIEVE only ever queries `agent.agent_knowledge` (vector+keyword hybrid, symptom text in), which surfaces `related_keys`; COMPARE only ever queries `agent.config_baseline` (exact key match, using exactly those `related_keys`) plus the live ConfigMap/values.yaml for the current value, and diffs the two. Neither node does the other's job.
+Node/tool routing is fixed by topology, not chosen by the LLM: RETRIEVE only ever calls `search_vector` (Phase 6, hybrid vector+keyword over `agent.agent_knowledge`, symptom text in), which surfaces `related_keys`; COMPARE only ever calls `search_config_baseline` (exact key match, using exactly those `related_keys`) plus `get_live_config_value` (Phase 6) for the current value, and diffs the two. Neither node does the other's job — same reasoning as why keyword/vector search stayed merged into one tool while baseline lookup stayed separate (Phase 7).
 
-**Exit criteria:** trigger both sims for real, confirm the graph reaches DIAGNOSE with correct `failure_class`/`root_cause` and evidence IDs that trace back to real Phase-6 bundles. Worth a deliberate demo checkpoint here.
+**Exit criteria:** trigger Sim A for real (`Error_Simulation/sim_a_jdbc_url.sh inject`), confirm the graph reaches DIAGNOSE with correct `failure_class`/`root_cause` and evidence IDs that trace back to real tool calls (not a pre-built bundle — there isn't one). Worth a deliberate demo checkpoint here.
 
 ## Phase 9 — `repo_config` + `helm_ops` MCP servers, worktree patching (no push)
 
@@ -205,6 +217,8 @@ Revised (reconciliation pass): the agent no longer merges its own PR, deploys, o
 ## Phase 11 — SPIFFE/SPIRE identity + local OAuth authorization service
 
 New phase (reconciliation pass), inserted between the narrowed Phase 10 and the new Phase 12 it gates. Purpose: nothing may deploy PingFederate or run a dangerous runtime action without both (a) a SPIFFE-authenticated caller identity and (b) a scoped, single-use, human/approval-derived token bound to the exact operation — identity alone is not authorization.
+
+**What SPIFFE/SPIRE is actually for, since it's easy to undersell as "just logging":** (1) proves who's really calling — without it, "the agent" is just whatever process hits a tool server's network endpoint, and anything with network access could claim to be it; (2) authorization gets bound to that verified identity at the moment of the call (a token's claims are checked against the presenting caller's actual SPIFFE ID and rejected on mismatch) — this *prevents* misuse, it doesn't just record it after the fact; (3) a reliable audit trail is a real byproduct of (1) and (2), not the reason this phase exists. Until this phase is built, the read/write tool boundary from Phase 6 is what actually keeps writes from happening without approval — SPIFFE adds cryptographic enforcement on top of that boundary later, it doesn't replace it.
 
 **Entry criteria:** Phase 10 done (there's a real PR-merge event to gate deployment on).
 
@@ -283,8 +297,8 @@ Kept as V1 scope (reconciliation pass) rather than dropped.
 - `push-to-github.sh` — separate, cluster-independent GitHub repo bootstrap
 - `db/init.sql` — agent schema, grows through Phases 2, 4, 5, 7, 10, 15
 - `knowledge/golden-architecture.md` — narrative RAG source, done ahead of Phase 7's ingest tooling
-- `agent/detector.py` — raw-log normalize pass + dedup/fingerprint logic both sims depend on (Phase 4/5)
-- `agent/dump_evidence.py` — evidence-bundle schema reused by eval fixtures
+- `agent/detector.py` — raw-log normalize pass + dedup/fingerprint logic + the JDBC-allowlist agent trigger (Phase 4/5/8)
+- `mcp_servers/kubernetes/server.py`, `mcp_servers/git/server.py`, `mcp_servers/logs/server.py`, `mcp_servers/knowledge/server.py` — the four read-only tool servers (Phase 6); `mcp_servers/repo_config/` is the one write-capable server, kept deliberately separate (Phase 9)
 - `authorization/token_issuer.py` — the only place deployment/direct-action tokens are minted (Phase 11)
 
 ## Verification approach
