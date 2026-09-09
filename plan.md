@@ -141,7 +141,7 @@ The 16 phases above are the full eventual build order. Day-to-day execution has 
 
 Phases 9 onward (PR creation, SPIFFE/authorization, CI/CD deploy, the full UI, policy, incident-history, eval) stay in their existing numbered order after that — this reordering only affects what happens immediately next, not the long-run sequence.
 
-## Phase 7 — `agent_knowledge` (vector) + `config_baseline` (exact) tables — done (hybrid retrieval's keyword half still pending)
+## Phase 7 — `agent_knowledge` (vector) + `config_baseline` (exact) tables + hybrid retrieval — done
 
 Revised further, worked out in detail during a dedicated design pass (not just at Phase-7 time — `knowledge/golden-architecture.md` was drafted early, ahead of this phase, because Sim A work needed it sooner): agent-knowledge is not one table, it's two, doing two different jobs, populated and queried differently.
 
@@ -154,9 +154,9 @@ Embeddings: local, not a hosted API — `agent/embeddings.py` uses `BAAI/bge-sma
 
 **Deliverables (done):** `knowledge/golden-architecture.md` (narrative-only, `###`-chunked, `related_keys` per chunk); `search/ingest.py` (parses frontmatter + `###` chunks, embeds each chunk locally, upserts into `agent.agent_knowledge`, content-hash-gated so unchanged chunks aren't re-embedded); `search/seed_baseline.py` (walks `helm/ping-devops/values.yaml` for any `envs:` block, seeds `agent.config_baseline` once, skips — never overwrites — any key already frozen).
 
-**Not yet built:** `search/query.py`'s hybrid merge (`ts_rank` keyword search + cosine vector search, combined via reciprocal rank fusion). Only the vector half has been exercised so far.
+`search/query.py` — `search(query_text, top_k)`: runs `ts_rank` keyword search and cosine vector search separately, merges via reciprocal rank fusion (`RRF_K = 60`, standard constant, not tuned). This is the one tool the live agent (Phase 8) calls for knowledge search — it never chooses keyword-only vs. vector-only itself, see the conversation this was built from for why that's not a useful decision to hand an LLM.
 
-**Exit criteria (met, verified against the live cluster):** `search/seed_baseline.py` seeded 9 real keys into `agent.config_baseline` (e.g. `SELECT golden_value FROM agent.config_baseline WHERE key = 'pingfederate-admin.envs.SERVER_PROFILE_PATH'` returns `helm/server-profile`, the correct frozen value). `search/ingest.py` embedded all 12 chunks from the knowledge doc. A real similarity-search query ("the pod is Ready but seems to be running an old or stale configuration") correctly surfaced the `SERVER_PROFILE_PATH /instance trap` chunk in the top 3 results (rank 2 of 3, not rank 1 — honest result, not a perfect one, reasonable given a 12-chunk corpus and a small local model) with its `related_keys` intact and pointing at the right `config_baseline` keys.
+**Exit criteria (met, verified against the live cluster):** `search/seed_baseline.py` seeded 9 real keys into `agent.config_baseline` (e.g. `SELECT golden_value FROM agent.config_baseline WHERE key = 'pingfederate-admin.envs.SERVER_PROFILE_PATH'` returns `helm/server-profile`, the correct frozen value). `search/ingest.py` embedded all 12 chunks from the knowledge doc. An abstract/paraphrased query ("the pod is Ready but seems to be running an old or stale configuration") ranks the `SERVER_PROFILE_PATH /instance trap` chunk #2 of 3 (honest result, not a perfect one — reasonable given a 12-chunk corpus and a small local model). A query containing the exact identifier (`SERVER_PROFILE_PATH`) promotes the same chunk to **#1** with a clearly higher RRF score — concrete evidence the keyword half is pulling its weight, not just a design assumption.
 
 ## Phase 8 — LangGraph diagnosis loop (read-only) — first demo milestone
 
