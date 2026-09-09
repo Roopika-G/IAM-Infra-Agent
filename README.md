@@ -1,15 +1,33 @@
 # Self-Healing IAM Agent — local dev environment
 
 Local kind cluster running PingFederate (admin + engine) with a Postgres
-(pgvector) backend. See `/Users/roopika/.claude/plans/okay-now-let-s-implement-sparkling-lamport.md`
-for the full project plan.
+(pgvector) backend, plus the beginnings of the self-healing agent itself
+(log ingestion, error-signature dedup, a RAG knowledge base). See `plan.md`
+for the full project plan and current status.
 
 ## Prerequisites
 
 - Docker Desktop running, with enough memory allocated (Settings → Resources)
-- `terraform`, `kubectl`, `helm` on PATH
+- `terraform`, `kubectl`, `helm`, `uv` on PATH
+- `gh` authenticated (`gh auth status`) — `helm/server-profile/**` is
+  git-sourced, PF pods pull it from GitHub at startup, so pushing there has
+  to actually work
 - `infrastructure/.env` set up (copy `infrastructure/.env.example`, fill in
   the license path, matching `pf.jwk` path, and administrator password)
+
+## First-time setup (cloning this repo fresh)
+
+1. Prerequisites above, then `cp infrastructure/.env.example infrastructure/.env` and fill it in (see "Starting healthy PingFederate pods" below).
+2. `./deploy-all.sh` — one command for the whole cluster: kind (Terraform) → Postgres + schema (`deploy-platform.sh`, applies `db/init.sql`) → PingFederate (`deploy-helm.sh`).
+3. `uv sync` — installs the Python environment into `.venv` (`agent/`, `search/`, `tests/`). First run of `search/ingest.py` also downloads a small (~130MB) local embedding model, one-time.
+4. Seed the two Postgres-side pieces the agent needs — both one-time:
+   ```sh
+   export AGENT_DB_DSN="postgresql://postgres:$(kubectl -n pingfederate get secret postgres-credentials -o jsonpath='{.data.POSTGRES_JDBC_PASSWORD}' | base64 -d)@localhost:5432/postgres"
+   uv run python search/seed_baseline.py   # freezes the known-good config baseline
+   uv run python search/ingest.py          # embeds knowledge/golden-architecture.md
+   ```
+
+After this, `agent.incidents`, `agent.config_baseline`, and `agent.agent_knowledge` are all live in Postgres — see "What to rerun when you change things" below for ongoing work.
 
 ## Starting healthy PingFederate pods
 
@@ -72,6 +90,20 @@ To redeploy just one piece after making changes:
 ./deploy-platform.sh   # Postgres only
 ./deploy-helm.sh       # PingFederate only (also picks up server-profile edits)
 ```
+
+## What to rerun when you change things
+
+| You changed... | Run this | Why |
+|---|---|---|
+| `infrastructure/*.tf` (cluster/namespace/secrets) | `./deploy-all.sh` (or `cd infrastructure && terraform apply`) | Idempotent — safe any time |
+| `helm/ping-devops/values.yaml` (sidecars, envs, resources, etc.) | `./deploy-helm.sh` | Applies the new Helm values and restarts the pods |
+| `helm/server-profile/**` (PF config, `log4j2.xml`, etc.) | `git push` **then** `./deploy-helm.sh` | Git-sourced — PF pulls this from GitHub at pod startup, so a local edit alone does nothing until it's pushed *and* the pods restart |
+| `db/init.sql` (new tables/columns) | `./deploy-platform.sh` | Idempotent (`CREATE TABLE IF NOT EXISTS`, etc.) — safe to rerun any time, only applies what's actually new |
+| `knowledge/*.md` | `uv run python search/ingest.py` | Content-hash-gated — only re-embeds chunks that actually changed, safe to rerun any time |
+| A **new** key added to `values.yaml`'s `envs:` | `uv run python search/seed_baseline.py` | Only seeds keys not already frozen — never touches or updates an existing baseline row, deliberately (see below) |
+| Nothing — just want the detector running | `uv run python agent/detector.py` | Long-running poll loop, not a setup step — leave it running in its own terminal |
+
+**Never run `search/seed_baseline.py` just because an existing value changed in `values.yaml`.** `agent.config_baseline` is a frozen reference used to catch drift — if it resynced on every change it could never disagree with a bad commit, and drift detection becomes impossible by construction. It's the one script here that's deliberately *not* idempotent-toward-updates. See the `config_baseline` comment in `db/init.sql` for the full reasoning.
 
 ## Connecting to the cluster
 
@@ -172,13 +204,28 @@ included, nothing persists outside the cluster).
 ## Repo layout
 
 ```
-infrastructure/     Terraform — cluster, namespace, secrets
+infrastructure/      Terraform — cluster, namespace, secrets
 helm/
-  ping-devops/       Vendored PingFederate Helm chart
-  postgres.yaml       Raw manifest (pgvector/pgvector image)
-  server-profile/     PF server profile cloned from Git at pod startup
-db/init.sql          Postgres schema (pf_app, agent) + pgvector extension
-deploy-all.sh        Full deploy: terraform + platform + PF
-deploy-platform.sh   Postgres only
-deploy-helm.sh       PingFederate only
+  ping-devops/        Vendored PingFederate Helm chart (also defines the
+                       Fluent Bit sidecar — see values.yaml's sidecars:)
+  postgres.yaml        Raw manifest (pgvector/pgvector image)
+  server-profile/      PF server profile cloned from Git at pod startup
+db/init.sql           Postgres schema: pf_app, agent (pf_logs_raw lives in
+                       public — see its comment in init.sql for why) +
+                       pgvector extension
+knowledge/            RAG source docs (golden-architecture.md today)
+agent/
+  signature.py         normalizes + fingerprints a log message
+  detector.py           polls pf_logs_raw, dedups into agent.incidents
+  embeddings.py         local embeddings (BAAI/bge-small-en-v1.5)
+search/
+  ingest.py              embeds knowledge/*.md into agent.agent_knowledge
+  seed_baseline.py        one-time: freezes agent.config_baseline
+  query.py                 hybrid (keyword+vector) search over agent_knowledge
+  baseline.py               exact-key lookup against config_baseline
+tests/                Python tests (pytest)
+pyproject.toml        Python deps, managed with uv
+deploy-all.sh         Full deploy: terraform + platform + PF
+deploy-platform.sh    Postgres only
+deploy-helm.sh        PingFederate only
 ```
