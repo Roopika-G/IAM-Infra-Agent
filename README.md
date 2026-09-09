@@ -224,6 +224,8 @@ search/
   baseline.py               exact-key lookup against config_baseline
 tests/                Python tests (pytest)
 pyproject.toml        Python deps, managed with uv
+Error_Simulation/
+  sim_a_jdbc_url.sh    Sim A: inject/restore a POSTGRES_JDBC_URL corruption
 setup.sh              First-time setup: deploy-all.sh + uv sync + seed_baseline.py + ingest.py
 deploy-all.sh         Full deploy: terraform + platform + PF
 deploy-platform.sh    Postgres only
