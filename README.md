@@ -135,6 +135,56 @@ kubectl -n pingfederate exec -it <pod-name> -- sh # shell into a pod
 Current pods you should see: `pingfederate-pingfederate-admin-*`,
 `pingfederate-pingfederate-engine-*`, `postgres-0`.
 
+## Running a fault simulation
+
+`Error_Simulation/` holds scripts that deliberately break PF, to test
+whether `agent/detector.py` actually catches it. Each one has two modes —
+`inject` (break it) and `restore` (fix it) — run as two separate,
+deliberate steps so you have time to observe the broken state in between,
+not a script that blinks the fault on and off automatically.
+
+### Sim A — `POSTGRES_JDBC_URL` corruption
+
+```sh
+./Error_Simulation/sim_a_jdbc_url.sh inject
+```
+
+Corrupts PF's JDBC datastore URL to a nonexistent host and redeploys.
+Both pods stay `2/2 Running` — this fault doesn't crash PF, it just makes
+one specific datastore connection fail, logging a real `ERROR`. Watch it
+come back up:
+
+```sh
+kubectl -n pingfederate get pods -w
+```
+
+Run the detector against it (one poll is enough for a manual check):
+
+```sh
+export AGENT_DB_DSN="postgresql://postgres:$(kubectl -n pingfederate get secret postgres-credentials -o jsonpath='{.data.POSTGRES_JDBC_PASSWORD}' | base64 -d)@localhost:5432/postgres"
+uv run python -c "
+import sys; sys.path.insert(0, 'agent')
+import detector, psycopg
+with psycopg.connect(detector.DB_DSN) as conn:
+    print('processed', detector.poll_once(conn), 'rows')
+    conn.commit()
+"
+```
+
+Then check it landed as a deduped incident (in pgAdmin, or `psql`):
+
+```sql
+SELECT fingerprint, occurrence_count, sample_message
+FROM agent.incidents
+WHERE sample_message ILIKE '%data source instance%';
+```
+
+When you're done, put PF back:
+
+```sh
+./Error_Simulation/sim_a_jdbc_url.sh restore
+```
+
 ## Accessing services from your host
 
 | Service | URL / connection | Notes |
