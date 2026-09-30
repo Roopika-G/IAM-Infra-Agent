@@ -1,3 +1,10 @@
+PingFederate broke at 3:14 AM. The agent noticed, deduped the incident instead of paging four times, matched it against the golden config, and fixed it before anyone woke up. Self-Healing IAM Agent — logs in, fixed out.
+
+## Walkthrough
+
+<video src="brag-output/brag.mp4" poster="brag-output/brag.jpg" controls width="720"></video>
+
+
 # Self-Healing IAM Agent — local dev environment
 
 Local kind cluster running PingFederate (admin + engine) with a Postgres
