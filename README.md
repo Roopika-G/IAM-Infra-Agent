@@ -7,7 +7,9 @@ for the full project plan and current status.
 
 ## Walkthrough
 
-<video src="brag-output/brag.mp4" poster="brag-output/brag.jpg" controls width="720"></video>
+
+https://github.com/user-attachments/assets/4f46dd90-9b57-42c1-a9f7-0440077a0c30
+
 
 A stylized run-through of the Sim A incident — gives a feel for how the
 agent detects, dedups, and heals, using real log lines and script names.
