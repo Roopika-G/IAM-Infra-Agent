@@ -78,5 +78,49 @@ def diff_vs_golden(path: str, golden_ref: str, ref: str = "main") -> dict:
     }
 
 
+
+# --- text search across the allowed files ---
+
+import subprocess
+
+MAX_MATCHES = 30
+MAX_MATCH_CHARS = 200
+
+
+@mcp.tool()
+def find_in_repo(text: str, ref: str = "main") -> dict:
+    """Case-insensitive plain-text search over the two files the agent may
+    diagnose: helm/ping-devops/values.yaml and helm/server-profile/**, at a
+    git ref (default main). Returns up to 30 matches as {path, line,
+    key_path, text}; for values.yaml, key_path is the exact dotted path to
+    pass to read_values_yaml_key / the patch tools (null if the hit is in a
+    comment). Use it to find where a value, tag or key is set when you do
+    not already know the path."""
+    if not text.strip() or len(text) > 200 or "\n" in text:
+        raise ValueError("text must be one non-empty line up to 200 characters")
+    common.validate_ref(ref)
+    result = subprocess.run(
+        ["git", "grep", "-n", "-i", "-F", "-I", "--no-color", "-e", text, ref, "--", common.VALUES_FILE, common.SERVER_PROFILE_PREFIX],
+        cwd=common.REPO_ROOT, capture_output=True, text=True,
+    )
+    if result.returncode == 1 and not result.stderr.strip():
+        return {"query": text, "ref": ref, "matches": [], "truncated": False}
+    if result.returncode != 0:
+        raise ValueError(f"git grep failed: {result.stderr.strip()[:300]}")
+
+    values_text = None
+    matches = []
+    rows = result.stdout.splitlines()
+    for row in rows[:MAX_MATCHES]:
+        _, path, line_no, content = row.split(":", 3)
+        key_path = None
+        if path == common.VALUES_FILE:
+            values_text = values_text or common.git_show(ref, common.VALUES_FILE)
+            key_path = common.yaml_path_at_line(values_text, int(line_no))
+        shown = "***" if key_path and common.is_protected_key(key_path.split(".")[-1]) else content.strip()[:MAX_MATCH_CHARS]
+        matches.append({"path": path, "line": int(line_no), "key_path": key_path, "text": shown})
+    return {"query": text, "ref": ref, "matches": matches, "truncated": len(rows) > MAX_MATCHES}
+
+
 if __name__ == "__main__":
     mcp.run()
