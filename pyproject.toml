@@ -3,6 +3,8 @@ name = "self-healing-iam-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "kubernetes>=36.0.3",
+    "mcp>=2.2.0",
     "psycopg[binary]>=3.1",
     "sentence-transformers>=6.0.1",
 ]
