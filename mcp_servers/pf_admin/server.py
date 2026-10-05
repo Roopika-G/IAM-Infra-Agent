@@ -87,5 +87,66 @@ def get_pf_version() -> dict:
     return redact(_get("/version"))
 
 
+
+# --- license and certificate expiry (whitelisted fields only) ---
+
+from datetime import datetime, timezone
+
+_LICENSE_FIELDS = ("product", "version", "tier", "issueDate", "expirationDate", "gracePeriod", "enforcementType",
+                   "usedConnections", "maxConnections", "bridgeMode", "oauthEnabled", "provisioningEnabled")
+_CERT_FIELDS = ("id", "serialNumber", "subjectDN", "issuerDN", "validFrom", "expires", "status",
+                "keyAlgorithm", "keySize", "signatureAlgorithm", "sha1Fingerprint")
+_CERT_SOURCES = {"ssl_server": "/keyPairs/sslServer", "signing": "/keyPairs/signing", "ca": "/certificates/ca"}
+
+
+def days_until(iso: str | None, now: datetime | None = None) -> int | None:
+    """Whole days from now until an ISO-8601 timestamp (negative once past)."""
+    if not iso:
+        return None
+    when = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    return (when - (now or datetime.now(timezone.utc))).days
+
+
+def _pick(item: dict, fields: tuple) -> dict:
+    return {f: item[f] for f in fields if f in item}
+
+
+@mcp.tool()
+def get_pf_license() -> dict:
+    """PingFederate's license as PF reports it: product, version, tier,
+    issue and expiration dates, grace period, connection usage, plus
+    days_until_expiry (negative once expired). Organisation and license id
+    are deliberately omitted. A license is a Kubernetes Secret: it can only
+    be replaced by a human."""
+    lic = _get("/license")
+    out = _pick(lic, _LICENSE_FIELDS)
+    out["days_until_expiry"] = days_until(lic.get("expirationDate"))
+    return out
+
+
+@mcp.tool()
+def get_pf_certificates() -> dict:
+    """Certificates PingFederate holds, with days_until_expiry for each:
+    ssl_server keypairs, signing keypairs and trusted CA certificates. Only
+    identity and validity fields are returned (subject, issuer, validity,
+    status, algorithm, fingerprint); no key material or certificate bodies.
+    Returns {ssl_server: [...], signing: [...], ca: [...]} sorted by soonest
+    expiry; a category that could not be read holds {error: ...}."""
+    out = {}
+    for category, path in _CERT_SOURCES.items():
+        try:
+            items = _get(path).get("items", [])
+        except Exception as e:
+            out[category] = {"error": str(e)[:120]}
+            continue
+        rows = []
+        for it in items:
+            row = _pick(it, _CERT_FIELDS)
+            row["days_until_expiry"] = days_until(it.get("expires"))
+            rows.append(row)
+        out[category] = sorted(rows, key=lambda r: (r["days_until_expiry"] is None, r["days_until_expiry"]))
+    return out
+
+
 if __name__ == "__main__":
     mcp.run()
