@@ -197,6 +197,71 @@ When you're done, put PF back:
 ./Error_Simulation/sim_a_jdbc_url.sh restore
 ```
 
+## MCP servers (the agent's tools)
+
+The tools the agent and CI/CD call. Each server is a separate program (stdio
+transport) that an MCP client launches; each tool is one function. Servers
+are split by credential and by read vs write, so the diagnosis phase is
+structurally never handed a write tool — see `plan.md` Phase 6 and 9.
+
+| Server | Tools | Talks to | Access |
+|---|---|---|---|
+| `mcp_servers/knowledge/` | `search_vector`, `get_baseline_value`, `get_logs` | Postgres (`agent_knowledge`, `config_baseline`, `pf_logs_raw`) | read-only |
+| `mcp_servers/kubernetes/` | `get_pod_status`, `get_events`, `get_live_config_value` | k8s API, `pingfederate` namespace only | read-only |
+| `mcp_servers/pf_admin/` | `get_pf_datastore`, `get_pf_cluster_status`, `get_pf_version` | PingFederate admin API (3 whitelisted GETs, secrets stripped) | read-only |
+| `mcp_servers/repo_read/` | `read_values_yaml_key`, `read_server_profile_file`, `diff_vs_golden` | git refs (default `main`), `values.yaml` + `helm/server-profile/**` only | read-only |
+| `mcp_servers/repo_config/` | `patch_helm_values`, `patch_server_profile` | a local worktree on branch `remediation/inc-<id>` | **write** (local commit only, never pushes) |
+| `mcp_servers/helm_ops/` | `helm_render_validate` | `helm template`, diffs `main` vs the incident branch | read-only |
+| `mcp_servers/helm_deploy/` | `helm_upgrade_release`, `helm_rollback_release` | the live Helm release | **write**, CI/CD only, token-gated |
+| `mcp_servers/github_pr/` | `push_remediation_branch`, `create_pull_request`, `add_pr_comment` | GitHub, via the authenticated `gh` CLI | **write** (publishes a branch + PR; no merge/approve/close) |
+
+`github_pr` is our own narrow server on top of `gh` rather than the prebuilt
+GitHub MCP server: it can only push branches named `remediation/inc-<n>`
+(never forced) and open/comment on PRs from those branches. There is no
+merge tool — a human merges, and branch protection on `main` (Phase 10)
+enforces that.
+
+How the patch tools stay safe: the file's sha256 must be passed back
+(refuses if it changed since it was read), only the two allowed locations are
+reachable, keys that look like secrets (`PASSWORD`, `LICENSE`, `JWK`, …) are
+refused outright, and only the one target value changes — comments and
+formatting are preserved. Patches land in `.worktrees/inc-<id>` (gitignored).
+
+Run one by hand (it just waits on stdin for an MCP client, so this only
+confirms it starts — to actually call a tool, use an MCP client such as the
+`mcp` package's `stdio_client`):
+
+```sh
+export AGENT_DB_DSN="postgresql://postgres:$(kubectl -n pingfederate get secret postgres-credentials -o jsonpath='{.data.POSTGRES_JDBC_PASSWORD}' | base64 -d)@localhost:5432/postgres"
+uv run python mcp_servers/knowledge/server.py     # likewise kubernetes, pf_admin, repo_read, repo_config, helm_ops, helm_deploy
+```
+
+Things worth knowing:
+
+- **An MCP stdio client does not pass your shell environment to the server.**
+  Whatever launches a server must pass its variables explicitly, or the
+  server starts but its tools fail with a generic error: `AGENT_DB_DSN`
+  (knowledge); `KUBE_CONTEXT` (kubernetes, helm_*) if not on the default
+  cluster; `PF_ADMIN_PASSWORD` (pf_admin, required; `PF_ADMIN_USER` and
+  `PF_ADMIN_URL` optional); `HELM_DEPLOY_TOKEN` (helm_deploy, required — the
+  server refuses every action without it).
+- `helm_deploy`'s token check is an interim stand-in for Phase 11's
+  single-use, commit-bound tokens: it gates the tools but doesn't yet bind a
+  token to one commit or one use. It has not been exercised against the live
+  cluster — only its refusals (no token, wrong token, bad commit, bad
+  revision) are tested.
+- `pf_admin` uses the full `administrator` login for now. A dedicated
+  read-only account would be safer; whether PF 13.1 offers an Auditor role
+  here is unverified.
+- `helm_render_validate` diffs `main` against the incident branch, so it
+  shows what *the patch* changes. The live release already differs from
+  `main` by ~113 rendered lines (reported separately as
+  `deployed_differs_from_main_lines`).
+- `get_live_config_value` runs a fixed `printenv <KEY>` inside the pod (key
+  validated as a plain variable name) — it reports what the container
+  actually sees, which can differ from the ConfigMap, since env vars are
+  fixed at container start.
+
 ## Accessing services from your host
 
 | Service | URL / connection | Notes |
@@ -274,7 +339,13 @@ helm/
 db/init.sql           Postgres schema: pf_app, agent (pf_logs_raw lives in
                        public — see its comment in init.sql for why) +
                        pgvector extension
-knowledge/            RAG source docs (golden-architecture.md today)
+knowledge/            RAG source docs: golden-architecture.md (what correct
+                       looks like and why), known-faults.md (symptom → cause
+                       for faults this deployment has actually hit)
+mcp_servers/            MCP tool servers (see "MCP servers" above)
+  common.py              shared path/ref validation, git wrapper, YAML + properties patching
+  knowledge/ kubernetes/ pf_admin/ repo_read/ helm_ops/   read-only
+  repo_config/ helm_deploy/ github_pr/                    write-capable
 agent/
   signature.py         normalizes + fingerprints a log message
   detector.py           polls pf_logs_raw, dedups into agent.incidents
@@ -283,6 +354,7 @@ search/
   ingest.py              embeds knowledge/*.md into agent.agent_knowledge
   seed_baseline.py        one-time: freezes agent.config_baseline
   query.py                 hybrid (keyword+vector) search over agent_knowledge
+  eval_retrieval.py         labelled-query retrieval eval (recall@1/@3, key → file resolution)
   baseline.py               exact-key lookup against config_baseline
 tests/                Python tests (pytest)
 pyproject.toml        Python deps, managed with uv
