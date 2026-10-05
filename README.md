@@ -207,11 +207,11 @@ structurally never handed a write tool — see `plan.md` Phase 6 and 9.
 | Server | Tools | Talks to | Access |
 |---|---|---|---|
 | `mcp_servers/knowledge/` | `search_vector`, `get_baseline_value`, `get_logs` | Postgres (`agent_knowledge`, `config_baseline`, `pf_logs_raw`) | read-only |
-| `mcp_servers/kubernetes/` | `get_pod_status`, `get_events`, `get_live_config_value` | k8s API, `pingfederate` namespace only | read-only |
-| `mcp_servers/pf_admin/` | `get_pf_datastore`, `get_pf_cluster_status`, `get_pf_version` | PingFederate admin API (3 whitelisted GETs, secrets stripped) | read-only |
-| `mcp_servers/repo_read/` | `read_values_yaml_key`, `read_server_profile_file`, `diff_vs_golden` | git refs (default `main`), `values.yaml` + `helm/server-profile/**` only | read-only |
+| `mcp_servers/kubernetes/` | `get_pod_status`, `get_events`, `get_live_config_value`, `get_pod_logs`, `get_pod_spec`, `get_workload_status`, `get_secret_keys` | k8s API, `pingfederate` namespace only | read-only |
+| `mcp_servers/pf_admin/` | `get_pf_datastore`, `get_pf_cluster_status`, `get_pf_version`, `get_pf_license`, `get_pf_certificates` | PingFederate admin API (5 whitelisted GETs; license/certificate output built from a field whitelist) | read-only |
+| `mcp_servers/repo_read/` | `read_values_yaml_key`, `read_server_profile_file`, `diff_vs_golden`, `find_in_repo` | git refs (default `main`), `values.yaml` + `helm/server-profile/**` only | read-only |
 | `mcp_servers/repo_config/` | `patch_helm_values`, `patch_server_profile` | a local worktree on branch `remediation/inc-<id>` | **write** (local commit only, never pushes) |
-| `mcp_servers/helm_ops/` | `helm_render_validate` | `helm template`, diffs `main` vs the incident branch | read-only |
+| `mcp_servers/helm_ops/` | `helm_render_validate`, `get_helm_release` | `helm template` / `helm history` / `helm get values` | read-only |
 | `mcp_servers/helm_deploy/` | `helm_upgrade_release`, `helm_rollback_release` | the live Helm release | **write**, CI/CD only, token-gated |
 | `mcp_servers/github_pr/` | `push_remediation_branch`, `create_pull_request`, `add_pr_comment` | GitHub, via the authenticated `gh` CLI | **write** (publishes a branch + PR; no merge/approve/close) |
 
@@ -220,6 +220,13 @@ GitHub MCP server: it can only push branches named `remediation/inc-<n>`
 (never forced) and open/comment on PRs from those branches. There is no
 merge tool — a human merges, and branch protection on `main` (Phase 10)
 enforces that.
+
+What the read tools deliberately never return: secret **values** (`get_secret_keys`
+gives key names, sizes and timestamps only; Helm release secrets are refused),
+environment variable **values** in `get_pod_spec` (names and source only),
+certificate or key material and license organisation/id (`pf_admin` returns a
+whitelist of identity and validity fields plus `days_until_expiry`), and
+anything that looks like `password=…` / `token=…` in container logs.
 
 How the patch tools stay safe: the file's sha256 must be passed back
 (refuses if it changed since it was read), only the two allowed locations are
