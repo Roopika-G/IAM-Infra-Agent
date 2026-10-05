@@ -80,5 +80,64 @@ def helm_render_validate(incident_id: int) -> dict:
             "rendered_diff": diff[:MAX_DIFF_CHARS], "deployed_differs_from_main_lines": drift}
 
 
+
+# --- deployed release history and values ---
+
+import json
+import re
+
+from mcp_servers.common import is_protected_key
+
+_KEY_PATH_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,200}$")
+
+
+def lookup_path(obj, path: str):
+    """Walk a dotted key path through nested dicts; None if any step is missing."""
+    for part in path.split("."):
+        if not isinstance(obj, dict) or part not in obj:
+            return None
+        obj = obj[part]
+    return obj
+
+
+def _mask(path: str, value):
+    return "***" if is_protected_key(path.split(".")[-1]) else value
+
+
+@mcp.tool()
+def get_helm_release(key_paths: list[str] | None = None, revisions: list[int] | None = None) -> dict:
+    """The deployed Helm release: its revision history (revision, time,
+    status, chart, description) and, for the key_paths you ask about, the
+    value each one had in the given revisions (default: the current one).
+    key_paths are dotted paths into the chart values, e.g.
+    'pingfederate-engine.image.tag'. Compare an earlier healthy revision with
+    the current one to see what changed (a bad image tag, a changed limit),
+    and compare with the repo to tell cluster-only drift from a bad commit.
+    At most 10 key paths and 3 revisions; secret-looking keys are masked.
+    Returns {history: [...], values: {revision: {key_path: value}}}."""
+    key_paths = key_paths or []
+    if len(key_paths) > 10 or not all(_KEY_PATH_RE.match(k) for k in key_paths):
+        raise ValueError("key_paths: at most 10, each a dotted path of letters, digits, '_', '-', '.'")
+    if revisions and (len(revisions) > 3 or any((not isinstance(r, int)) or r <= 0 for r in revisions)):
+        raise ValueError("revisions: at most 3 positive integers")
+
+    hist = _helm("history", RELEASE, "--namespace", NAMESPACE, "--kube-context", KUBE_CONTEXT, "--max", "10", "-o", "json")
+    if hist.returncode != 0:
+        raise ValueError(f"helm history failed: {hist.stderr.strip()[:300]}")
+    history = [{k: h.get(k) for k in ("revision", "updated", "status", "chart", "app_version", "description")}
+               for h in json.loads(hist.stdout)]
+
+    values = {}
+    if key_paths:
+        for rev in (revisions or [history[-1]["revision"]]):
+            got = _helm("get", "values", RELEASE, "--all", "--namespace", NAMESPACE, "--kube-context", KUBE_CONTEXT,
+                        "--revision", str(rev), "-o", "json")
+            if got.returncode != 0:
+                raise ValueError(f"helm get values (revision {rev}) failed: {got.stderr.strip()[:300]}")
+            doc = json.loads(got.stdout)
+            values[str(rev)] = {k: _mask(k, lookup_path(doc, k)) for k in key_paths}
+    return {"history": history, "values": values}
+
+
 if __name__ == "__main__":
     mcp.run()
