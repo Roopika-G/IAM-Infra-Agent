@@ -18,6 +18,7 @@ Run (stdio transport, how an MCP client launches it):
 
 import os
 import re
+import threading
 
 from kubernetes import client, config
 from kubernetes.stream import stream
@@ -32,6 +33,9 @@ _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 mcp = MCPServer("kubernetes")
 
 _core: client.CoreV1Api | None = None
+# kubernetes.stream.stream() temporarily swaps a method on the shared ApiClient,
+# so concurrent execs on it corrupt each other -- serialize them.
+_exec_lock = threading.Lock()
 
 
 def _api() -> client.CoreV1Api:
@@ -131,17 +135,18 @@ def get_live_config_value(pod: str, key: str, container: str | None = None) -> d
     if container is None:
         container = api.read_namespaced_pod(pod, NAMESPACE).spec.containers[0].name
 
-    out = stream(
-        api.connect_get_namespaced_pod_exec,
-        pod,
-        NAMESPACE,
-        container=container,
-        command=["printenv", key],
-        stderr=False,
-        stdin=False,
-        stdout=True,
-        tty=False,
-    )
+    with _exec_lock:
+        out = stream(
+            api.connect_get_namespaced_pod_exec,
+            pod,
+            NAMESPACE,
+            container=container,
+            command=["printenv", key],
+            stderr=False,
+            stdin=False,
+            stdout=True,
+            tty=False,
+        )
     value = out.rstrip("\n") if out else None
     return {"pod": pod, "container": container, "key": key, "value": value or None}
 
