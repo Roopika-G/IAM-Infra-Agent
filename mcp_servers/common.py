@@ -128,6 +128,38 @@ def patch_yaml_scalar(text: str, key_path: str, new_value: str) -> str:
     return patched
 
 
+def yaml_path_at_line(text: str, line: int) -> str | None:
+    """Dotted key path of the YAML key/value that sits on a 1-based line, or
+    None (comment, blank, or unparseable). Lets a text search hit be turned
+    into the exact path the patch tools take."""
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return None
+
+    def walk(node, prefix):
+        if isinstance(node, yaml.MappingNode):
+            for k, v in node.value:
+                path = prefix + [str(k.value)]
+                if isinstance(v, yaml.ScalarNode):
+                    if k.start_mark.line + 1 == line or v.start_mark.line + 1 <= line <= v.end_mark.line + 1:
+                        return ".".join(path)
+                else:
+                    found = walk(v, path)
+                    if found:
+                        return found
+                    if k.start_mark.line + 1 == line:
+                        return ".".join(path)
+        elif isinstance(node, yaml.SequenceNode):
+            for i, item in enumerate(node.value):
+                found = walk(item, prefix + [str(i)])
+                if found:
+                    return found
+        return None
+
+    return walk(root, []) if root is not None else None
+
+
 # --- properties files: key=value lines ---
 
 def patch_properties_key(text: str, key: str, new_value: str) -> str:
