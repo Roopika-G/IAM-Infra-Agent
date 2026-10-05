@@ -20,3 +20,6 @@ infrastructure/pingfederate.lic
 infrastructure/pf.jwk
 infrastructure/*-config
 infrastructure/terraform.tfvars
+
+# Remediation worktrees created by mcp_servers/repo_config
+.worktrees/
