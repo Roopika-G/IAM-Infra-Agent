@@ -1,4 +1,4 @@
-"""Parses knowledge/golden-architecture.md, embeds each ### chunk, and
+"""Parses every knowledge/*.md, embeds each ### chunk, and
 upserts into agent.agent_knowledge.
 
 Chunking: one atomic fact per ### heading (not per whole document) — see
@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent"))
 from embeddings import embed_documents
 
 DB_DSN = os.environ.get("AGENT_DB_DSN", "postgresql://postgres@localhost:5432/postgres")
-DOC_PATH = Path(__file__).resolve().parent.parent / "knowledge" / "golden-architecture.md"
+KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "knowledge"
 
 _CHUNK_RE = re.compile(r"^### (.+)$", re.MULTILINE)
 
@@ -60,12 +60,12 @@ def parse_document(text: str) -> tuple[dict, list[dict]]:
     return frontmatter, chunks
 
 
-def main() -> None:
-    text = DOC_PATH.read_text()
+def ingest_file(doc_path: Path) -> None:
+    text = doc_path.read_text()
     frontmatter, chunks = parse_document(text)
     doc_id = frontmatter["doc_id"]
 
-    print(f"Parsed {len(chunks)} chunks from {DOC_PATH.name} (doc_id={doc_id})")
+    print(f"Parsed {len(chunks)} chunks from {doc_path.name} (doc_id={doc_id})")
 
     full_texts = [f"{c['title']}\n\n{c['content']}" for c in chunks]
     hashes = [hashlib.sha256(t.encode()).hexdigest() for t in full_texts]
@@ -106,6 +106,11 @@ def main() -> None:
             )
         conn.commit()
         print(f"Upserted {len(to_embed_idx)} chunk(s) into agent.agent_knowledge.")
+
+
+def main() -> None:
+    for doc_path in sorted(KNOWLEDGE_DIR.glob("*.md")):
+        ingest_file(doc_path)
 
 
 if __name__ == "__main__":

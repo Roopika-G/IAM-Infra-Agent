@@ -24,6 +24,17 @@ def get_baseline_value(key: str) -> str | None:
     return row[0] if row else None
 
 
+def get_baseline_entry(key: str) -> dict | None:
+    """Like get_baseline_value, but also returns which file the key lives in
+    (source_file) -- that is what tells the agent which file to patch. For
+    values.yaml keys the key itself is the exact dotted path into the file."""
+    with psycopg.connect(DB_DSN) as conn:
+        row = conn.execute(
+            "SELECT golden_value, source_file FROM agent.config_baseline WHERE key = %s", (key,)
+        ).fetchone()
+    return {"golden_value": row[0], "source_file": row[1]} if row else None
+
+
 if __name__ == "__main__":
     import sys
 
