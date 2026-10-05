@@ -267,9 +267,11 @@ New phase (reconciliation pass) — this is what Phase 10 used to do itself; now
 
 **Risk:** highest blast-radius phase — the first point anything actually redeploys the live cluster. Deliberately exercise the rollback path (force a bad VERIFY) and the token-rejection path (wrong commit, expired token, reused `jti`), not just the happy path.
 
-## Phase 13 — UI (FastAPI + Jinja2 + HTMX + Bootstrap)
+## Phase 13 — UI (React + Vite + TypeScript over a FastAPI JSON API) — dashboard, incident detail, approvals, simulations built
 
-Revised: server-rendered UI, not a separate Vite/React frontend build — matches the reconciled spec's simpler stack and avoids a second build pipeline for a local demo.
+Revised (twice): first planned as server-rendered (Jinja2 + HTMX + Bootstrap) to avoid a second build pipeline; reversed on request in favor of React (Vite + TypeScript), with FastAPI serving a JSON API from `ui/data.py` and, after `npm run build`, the built app. Next.js and Angular were considered and rejected (Next adds a Node server and SSR a local dashboard doesn't need; Angular is heavier for this size). Styling is hand-written plain CSS — light, dense tables and a left nav, no card decks, no Bootstrap.
+
+**Built so far:** a fleet view (pf-admin / pf-engine / postgres: pod health, restarts, PF config replication, open incidents), a configuration-drift table (frozen baseline vs what each running container actually sees, same primitive as `get_live_config_value`), the incident queue and an incident detail page, an Approvals page listing `remediation/inc-*` pull requests via `gh`, and a Simulations page that runs `Error_Simulation/sim_a_jdbc_url.sh`. The incident detail's Diagnosis / Proposed fix / Attempts sections are empty placeholders until the agent exists. Not built: the direct-action approval flow.
 
 **Entry criteria:** Phase 12's full pipeline already verified directly (curl/GitHub UI) — this phase is presentation over an already-correct backend.
 

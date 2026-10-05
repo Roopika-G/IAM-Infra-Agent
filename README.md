@@ -262,6 +262,31 @@ Things worth knowing:
   actually sees, which can differ from the ConfigMap, since env vars are
   fixed at container start.
 
+## UI
+
+A dashboard over the same sources the agent's tools use: fleet health (pods,
+restarts, PingFederate config replication), configuration drift (frozen
+baseline vs what each running container actually sees), incidents with a
+detail page, remediation pull requests, and a Simulations page for Sim A.
+React + Vite + TypeScript frontend (`ui/web`), FastAPI JSON backend
+(`ui/app.py`, `ui/data.py`). Localhost only, no authentication — the
+Simulations page can redeploy the cluster.
+
+```sh
+export AGENT_DB_DSN="postgresql://postgres:$(kubectl -n pingfederate get secret postgres-credentials -o jsonpath='{.data.POSTGRES_JDBC_PASSWORD}' | base64 -d)@localhost:5432/postgres"
+export PF_ADMIN_PASSWORD="$(kubectl -n pingfederate get secret pingfederate-license -o jsonpath='{.data.PING_IDENTITY_PASSWORD}' | base64 -d)"
+
+cd ui/web && npm install && npm run build && cd ../..   # once, and after frontend changes
+uv run uvicorn ui.app:app --port 8000                     # serves API + built app at http://localhost:8000
+
+# frontend development with hot reload (second terminal): cd ui/web && npm run dev  → http://localhost:5173
+```
+
+Without `PF_ADMIN_PASSWORD` the fleet view still works but hides replication
+status. Incidents only update when `agent/detector.py` runs; fleet and drift
+are read live (cached ~8s). The incident detail's Diagnosis / Proposed fix /
+Attempts sections stay empty until the diagnosis agent exists.
+
 ## Accessing services from your host
 
 | Service | URL / connection | Notes |
@@ -356,6 +381,7 @@ search/
   query.py                 hybrid (keyword+vector) search over agent_knowledge
   eval_retrieval.py         labelled-query retrieval eval (recall@1/@3, key → file resolution)
   baseline.py               exact-key lookup against config_baseline
+ui/                   UI: app.py + data.py (FastAPI JSON API), web/ (React + Vite + TypeScript)
 tests/                Python tests (pytest)
 pyproject.toml        Python deps, managed with uv
 Error_Simulation/
