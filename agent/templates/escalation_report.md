@@ -1,11 +1,16 @@
 # Escalation: incident #{id}  {title}
+
 ## What happened
-{trigger_and_time}
+{trigger}
+
 ## What I checked
-{one_line_per_tool_call_with_evidence_ids}
+{checked}
+
 ## What I found
-{root_cause_or_unknown}  (confidence: {confidence})  {why}
+{found}  (confidence: {confidence})
+
 ## What I ruled out
-{causes_the_evidence_excludes}
+{ruled_out}
+
 ## What a human must do
-{concrete_next_step}
+{next_step}

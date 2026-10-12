@@ -1,10 +1,16 @@
 ## Diagnosis
 {root_cause}  (confidence: {confidence})
+
 ## Evidence
-{evidence_with_tool_calls_and_results}
+{evidence}
+
 ## Change
-{exact_diff}
+```diff
+{diff}
+```
+
 ## Render check
-{helm_render_validate_output}
+{render_check}
+
 ## How to verify
-{what_to_check_after_the_deploy}
+After this is merged and deployed, the error "{error}" should stop appearing and the drift scan should report every baseline key matching.
