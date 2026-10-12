@@ -13,6 +13,7 @@ Localhost use only: there is no authentication, and the Simulations endpoints
 can redeploy the cluster.
 """
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -31,7 +32,9 @@ def fleet():
 
 @app.get("/api/incidents")
 def incidents(scope: str = "open"):
-    return data.list_incidents(only_open=(scope != "all"))
+    if scope not in ("open", "past", "archived"):
+        raise HTTPException(400, "scope must be open, past or archived")
+    return data.list_incidents(scope)
 
 
 @app.get("/api/incidents/{incident_id}")
@@ -40,6 +43,16 @@ def incident(incident_id: int):
     if not found:
         raise HTTPException(404, "No such incident")
     return found
+
+
+@app.get("/api/activity")
+def activity():
+    return data.activity()
+
+
+@app.get("/api/config")
+def config():
+    return {"phoenix_url": os.environ.get("PHOENIX_URL", "http://localhost:6006")}
 
 
 @app.get("/api/approvals")

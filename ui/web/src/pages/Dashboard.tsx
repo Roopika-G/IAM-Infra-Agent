@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useFleet, useIncidents } from '../api'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { getJson, useActivity, useConfig, useFleet, useIncidents, useSimA } from '../api'
+import type { SimStatus } from '../api'
 import type { FleetComponent } from '../api'
 import { ago, statusLabel, statusTone } from '../format'
 import type { Tone } from '../format'
@@ -128,48 +130,69 @@ function DriftSection() {
   )
 }
 
+function ActivitySection() {
+  const q = useActivity()
+  return (
+    <Section title="Agent activity">
+      {q.data && q.data.length === 0 && <p className="muted">The agent has not done anything yet.</p>}
+      {q.data && q.data.length > 0 && (
+        <table>
+          <tbody>
+            {q.data.map((a, n) => (
+              <tr key={n}>
+                <td className="dim num">{ago(a.time)}</td>
+                <td>{a.text}{a.url && <> · <a href={a.url} target="_blank" rel="noreferrer">open</a></>}</td>
+                <td><Link to={`/incidents/${a.incident_id}`}>incident #{a.incident_id}</Link></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Section>
+  )
+}
+
 function IncidentsSection() {
-  const [scope, setScope] = useState<'open' | 'all'>('open')
+  const [scope, setScope] = useState<'open' | 'past' | 'archived'>('open')
   const q = useIncidents(scope)
   return (
     <Section
       title="Incidents"
       aside={
         <>
-          <button className={scope === 'open' ? 'link on' : 'link'} onClick={() => setScope('open')}>Open</button>
-          <button className={scope === 'all' ? 'link on' : 'link'} onClick={() => setScope('all')}>All</button>
+          {(['open', 'past', 'archived'] as const).map((s) => (
+            <button key={s} className={scope === s ? 'link on' : 'link'} onClick={() => setScope(s)}>{s[0].toUpperCase() + s.slice(1)}</button>
+          ))}
         </>
       }
     >
       {q.isLoading && <p className="muted">Loading…</p>}
       {q.isError && <p className="error">Could not load incidents: {(q.error as Error).message}</p>}
-      {q.data && q.data.length === 0 && <p className="muted">No {scope === 'open' ? 'open ' : ''}incidents.</p>}
+      {q.data && q.data.length === 0 && <p className="muted">No {scope} incidents.</p>}
       {q.data && q.data.length > 0 && (
         <table>
           <thead>
             <tr>
               <th className="num">ID</th>
               <th>Error</th>
-              <th>Role</th>
               <th>Status</th>
-              <th className="num">Seen</th>
+              <th>Agent result</th>
               <th>Last seen</th>
             </tr>
           </thead>
           <tbody>
             {q.data.map((i) => (
               <tr key={i.id}>
-                <td className="num">
-                  <Link to={`/incidents/${i.id}`}>#{i.id}</Link>
-                </td>
+                <td className="num"><Link to={`/incidents/${i.id}`}>#{i.id}</Link></td>
                 <td className="clip wide" title={i.sample_message ?? ''}>
                   <Link to={`/incidents/${i.id}`} className="plain">{i.sample_message}</Link>
                 </td>
-                <td>{i.pf_role ?? '-'}</td>
+                <td><Status tone={statusTone(i.status)}>{statusLabel(i.status)}</Status></td>
                 <td>
-                  <Status tone={statusTone(i.status)}>{statusLabel(i.status)}</Status>
+                  {i.result_url
+                    ? <a href={i.result_url} target="_blank" rel="noreferrer">{i.result_kind === 'pr_opened' ? 'PR #' : 'issue #'}{i.result_url.split('/').pop()}</a>
+                    : <span className="dim">-</span>}
                 </td>
-                <td className="num">{i.occurrence_count}×</td>
                 <td className="dim">{ago(i.last_seen)}</td>
               </tr>
             ))}
@@ -180,15 +203,39 @@ function IncidentsSection() {
   )
 }
 
+function Actions() {
+  const sim = useSimA()
+  const cfg = useConfig()
+  const qc = useQueryClient()
+  const inject = useMutation({
+    mutationFn: () => getJson<SimStatus>('/api/simulations/a/inject', { method: 'POST' }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['simA'] }),
+  })
+  const busy = !!sim.data?.running || inject.isPending
+  const trigger = () => {
+    if (window.confirm('This commits a broken JDBC URL to main and redeploys, restarting both PingFederate pods. The agent should then notice the error and open a pull request. Continue?')) inject.mutate()
+  }
+  const state = sim.data?.running ? 'Injecting the fault…' : sim.data?.state === 'corrupted' ? 'Fault is live. The agent should pick it up shortly.' : ''
+  return (
+    <div className="actions-bar">
+      <button className="btn" disabled={busy || sim.data?.state === 'corrupted'} onClick={trigger}>Trigger incident (Sim A)</button>
+      {cfg.data && <a href={cfg.data.phoenix_url} target="_blank" rel="noreferrer">Watch the agent live in Phoenix ↗</a>}
+      <span className="state">{inject.isError ? (inject.error as Error).message : state}</span>
+    </div>
+  )
+}
+
 export default function Dashboard() {
   return (
     <>
       <header className="page-head">
         <h1>Dashboard</h1>
       </header>
+      <Actions />
       <FleetSection />
-      <DriftSection />
+      <ActivitySection />
       <IncidentsSection />
+      <DriftSection />
     </>
   )
 }

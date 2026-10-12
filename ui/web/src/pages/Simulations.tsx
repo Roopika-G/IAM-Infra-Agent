@@ -17,8 +17,8 @@ export default function Simulations() {
   const start = (mode: 'inject' | 'restore') => {
     const what =
       mode === 'inject'
-        ? 'This points the JDBC datastore at a nonexistent host and redeploys, restarting both PingFederate pods.'
-        : 'This puts the JDBC URL back to its golden value and redeploys, restarting both PingFederate pods.'
+        ? 'This commits and pushes a broken JDBC URL to main (a simulated bad commit), then redeploys, restarting both PingFederate pods.'
+        : 'This commits and pushes the golden JDBC URL back to main, then redeploys, restarting both PingFederate pods.'
     if (window.confirm(`${what}\n\nContinue?`)) run.mutate(mode)
   }
 

@@ -26,6 +26,10 @@ from mcp_servers import common  # noqa: E402
 from mcp_servers.kubernetes import server as kube  # noqa: E402
 from mcp_servers.pf_admin import server as pfadmin  # noqa: E402
 
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")  # keys live in the repo-root .env (never overrides your shell)
+
 DB_DSN = os.environ.get("AGENT_DB_DSN", "postgresql://postgres@localhost:5432/postgres")
 CLOSED = ("RESOLVED", "FAILED")
 
@@ -45,50 +49,103 @@ def cached(key: str, ttl: float, fn):
 
 
 # --- incidents ---------------------------------------------------------
+#
+# Status words: NEW (just detected) -> DIAGNOSING (agent working) ->
+# WAITING_FOR_PR_REVIEW (agent opened a PR) -> MERGED (a human merged it) ->
+# RESOLVED (deployed and verified). ESCALATED = the agent opened an issue for a
+# human. PR_REJECTED / FAILED / ARCHIVED are closed.
 
-_INCIDENT_COLS = "id, status, pf_role, log_type, logger, exception_type, sample_message, first_seen, last_seen, occurrence_count, fingerprint"
+CLOSED = ("RESOLVED", "FAILED", "ARCHIVED", "PR_REJECTED")
+PAST = ("RESOLVED", "FAILED", "PR_REJECTED")
+
+_INCIDENT_COLS = "i.id, i.status, i.pf_role, i.log_type, i.logger, i.exception_type, i.sample_message, i.first_seen, i.last_seen, i.occurrence_count, i.fingerprint"
+_INCIDENT_KEYS = [c.split(".")[1].strip() for c in _INCIDENT_COLS.split(",")]
+# The latest agent run on the incident, if any: what it produced (a PR or an issue).
+_LATEST_RUN = """LEFT JOIN LATERAL (
+    SELECT id AS run_id, status AS run_status, outcome FROM agent.runs r WHERE r.incident_id = i.id ORDER BY started_at DESC LIMIT 1
+) lr ON true"""
 
 
-def _incident(row) -> dict:
-    keys = [c.strip() for c in _INCIDENT_COLS.split(",")]
-    return dict(zip(keys, row))
-
-
-def list_incidents(only_open: bool = True, limit: int = 200) -> list[dict]:
-    where = "WHERE status NOT IN ('RESOLVED','FAILED')" if only_open else ""
+def list_incidents(scope: str = "open", limit: int = 200) -> list[dict]:
+    """scope: open (needs attention or in progress) | past (finished) | archived."""
+    where = {"open": f"WHERE i.status NOT IN {CLOSED}", "past": f"WHERE i.status IN {PAST}", "archived": "WHERE i.status = 'ARCHIVED'"}[scope]
     with psycopg.connect(DB_DSN) as conn:
         rows = conn.execute(
-            f"SELECT {_INCIDENT_COLS} FROM agent.incidents {where} ORDER BY last_seen DESC LIMIT %s", (limit,)
-        ).fetchall()
-    return [_incident(r) for r in rows]
+            f"SELECT {_INCIDENT_COLS}, lr.outcome->>'kind', lr.outcome->>'url' FROM agent.incidents i {_LATEST_RUN} {where} ORDER BY i.last_seen DESC LIMIT %s",
+            (limit,)).fetchall()
+    return [{**dict(zip(_INCIDENT_KEYS, r[:-2])), "result_kind": r[-2], "result_url": r[-1]} for r in rows]
+
+
+def _summarize(events: list[dict]) -> dict:
+    """Boil a run's events down to what a person wants to read: the decision,
+    the evidence behind it, the policy verdict, and the commit/PR/issue it produced."""
+    out = {"decision": None, "policy": None, "evidence": [], "commit": None, "branch": None, "diff": None, "pr_number": None, "issue_number": None}
+    for e in events:
+        d = e["data"]
+        if e["kind"] == "decision":
+            out["decision"] = d
+        elif e["kind"] == "policy":
+            out["policy"] = {"passed": d["passed"], "failed_check": d.get("failed_check"), "reason": d.get("reason")}
+        elif e["kind"] == "evidence":
+            out["evidence"].append({"id": d["id"], "tool": d["tool"], "summary": d["summary"]})
+        elif e["kind"] == "tool_call" and not d.get("error") and isinstance(d.get("result"), dict):
+            r = d["result"]
+            if d["tool"] == "patch_helm_values":
+                out["commit"], out["branch"], out["diff"] = r.get("commit"), r.get("branch"), r.get("unified_diff")
+            elif d["tool"] == "create_pull_request":
+                out["pr_number"] = r.get("number")
+            elif d["tool"] == "create_github_issue":
+                out["issue_number"] = r.get("number")
+    return out
 
 
 def get_incident(incident_id: int) -> dict | None:
     with psycopg.connect(DB_DSN) as conn:
-        row = conn.execute(f"SELECT {_INCIDENT_COLS} FROM agent.incidents WHERE id = %s", (incident_id,)).fetchone()
+        row = conn.execute(f"SELECT {_INCIDENT_COLS} FROM agent.incidents i WHERE i.id = %s", (incident_id,)).fetchone()
         if not row:
             return None
-        incident = _incident(row)
-        logs = conn.execute(
-            """SELECT time, data->>'pf_role', data->>'pod_name', data->>'message'
-               FROM public.pf_logs_raw
-               WHERE data->>'message' = %s
-               ORDER BY time DESC LIMIT 10""",
-            (incident["sample_message"],),
-        ).fetchall()
-    # pf_logs_raw.time is a timestamp WITHOUT time zone, stored in UTC; tag it
-    # so the browser doesn't read it as local time.
-    incident["recent_logs"] = [
-        {"time": t.replace(tzinfo=timezone.utc), "role": r, "pod": p, "message": m} for t, r, p, m in logs
-    ]
+        incident = dict(zip(_INCIDENT_KEYS, row))
+        run = conn.execute(
+            "SELECT id, model, started_at, finished_at, status, outcome, error FROM agent.runs WHERE incident_id = %s ORDER BY started_at DESC LIMIT 1",
+            (incident_id,)).fetchone()
+        if run:
+            events = conn.execute("SELECT kind, data FROM agent.run_events WHERE run_id = %s ORDER BY seq", (run[0],)).fetchall()
+            incident["result"] = {"run_id": run[0], "model": run[1], "started_at": run[2], "finished_at": run[3], "status": run[4],
+                                  "outcome": run[5], "error": run[6], **_summarize([{"kind": k, "data": d} for k, d in events])}
+        else:
+            incident["result"] = None
     return incident
+
+
+def activity(limit: int = 12) -> list[dict]:
+    """A short feed of what the agent has done, newest first."""
+    items = []
+    with psycopg.connect(DB_DSN) as conn:
+        runs = conn.execute("SELECT incident_id, started_at, finished_at, status, outcome, error FROM agent.runs ORDER BY started_at DESC LIMIT %s", (limit,)).fetchall()
+    for iid, started, finished, status, outcome, error in runs:
+        items.append({"time": started, "incident_id": iid, "text": f"Agent started working on incident #{iid}"})
+        if finished:
+            ref = (outcome or {}).get("url", "") or ""
+            number = ref.rstrip("/").rsplit("/", 1)[-1] if ref else ""
+            text = {"pr_opened": f"Agent opened PR #{number} for human approval (incident #{iid})",
+                    "escalated": f"Agent escalated incident #{iid} to a human" + (f" (issue #{number})" if number else ""),
+                    "ERROR": f"Agent stopped with an error on incident #{iid}: {(error or '')[:80]}"}.get(status, f"Agent finished incident #{iid}: {status}")
+            items.append({"time": finished, "incident_id": iid, "text": text, "url": ref or None})
+    with psycopg.connect(DB_DSN) as conn:
+        deploys = conn.execute(
+            "SELECT r.incident_id, e.ts, e.data FROM agent.run_events e JOIN agent.runs r ON r.id = e.run_id "
+            "WHERE e.kind = 'deploy_result' ORDER BY e.ts DESC LIMIT %s", (limit,)).fetchall()
+    for iid, ts, d in deploys:
+        text = {"resolved": f"Merged fix deployed and verified; incident #{iid} resolved",
+                "rolled_back": f"Deploy did not fix incident #{iid}; rolled back",
+                "failed": f"Deploy failed for incident #{iid}"}.get(d.get("status"), f"Deploy finished for incident #{iid}")
+        items.append({"time": ts, "incident_id": iid, "text": text})
+    return sorted(items, key=lambda x: x["time"], reverse=True)[:limit]
 
 
 def open_counts_by_role() -> dict[str, int]:
     with psycopg.connect(DB_DSN) as conn:
-        rows = conn.execute(
-            "SELECT pf_role, count(*) FROM agent.incidents WHERE status NOT IN ('RESOLVED','FAILED') GROUP BY 1"
-        ).fetchall()
+        rows = conn.execute(f"SELECT pf_role, count(*) FROM agent.incidents WHERE status NOT IN {CLOSED} GROUP BY 1").fetchall()
     return {role: n for role, n in rows}
 
 

@@ -14,16 +14,16 @@ export function stamp(iso: string | null | undefined): string {
 
 const LABELS: Record<string, string> = {
   NEW: 'New',
-  DETECTED: 'Detected',
-  DIAGNOSING: 'Diagnosing',
-  NEEDS_MORE_EVIDENCE: 'Needs evidence',
-  PR_CREATED: 'PR created',
-  WAITING_FOR_PR_REVIEW: 'Awaiting review',
-  PR_REJECTED: 'PR rejected',
+  DIAGNOSING: 'Agent working',
+  WAITING_FOR_PR_REVIEW: 'PR open, awaiting review',
+  MERGED: 'Merged, deploy pending',
   DEPLOYING: 'Deploying',
-  VERIFYING: 'Verifying',
+  RETRY: 'Deploy failed, agent retrying',
+  ESCALATED: 'Escalated to a human',
+  PR_REJECTED: 'PR rejected',
   RESOLVED: 'Resolved',
   FAILED: 'Failed',
+  ARCHIVED: 'Archived (tested)',
 }
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'muted'
@@ -32,6 +32,6 @@ export const statusLabel = (s: string) => LABELS[s] ?? s
 export function statusTone(s: string): Tone {
   if (s === 'RESOLVED') return 'ok'
   if (s === 'FAILED' || s === 'PR_REJECTED') return 'bad'
-  if (['WAITING_FOR_PR_REVIEW', 'DEPLOYING', 'VERIFYING'].includes(s)) return 'warn'
+  if (['DIAGNOSING', 'WAITING_FOR_PR_REVIEW', 'MERGED', 'DEPLOYING', 'RETRY', 'ESCALATED'].includes(s)) return 'warn'
   return 'muted'
 }

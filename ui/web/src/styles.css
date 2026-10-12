@@ -144,3 +144,6 @@ button.link.on { color: var(--ink); font-weight: 600; text-decoration: underline
   .sidebar-foot { display: none; }
   .content { padding: 16px; }
 }
+
+.actions-bar { display: flex; gap: 16px; align-items: center; margin: 4px 0 6px; }
+.actions-bar .state { color: var(--dim); font-size: 12.5px; }

@@ -49,6 +49,41 @@ export interface Incident {
   occurrence_count: number
   fingerprint: string
   recent_logs?: Occurrence[]
+  result?: Result | null
+  result_kind?: string | null
+  result_url?: string | null
+}
+
+export interface Decision {
+  kind: 'repo_fix' | 'escalate'
+  diagnosis: { root_cause: string; confidence: string; evidence_ids: string[]; explanation: string }
+  changes?: { key_path: string; new_value: string }[]
+  next_step?: string
+}
+
+export interface Result {
+  run_id: number
+  model: string | null
+  started_at: string
+  finished_at: string | null
+  status: string
+  outcome: { kind: string; url: string | null; detail: string } | null
+  error: string | null
+  decision: Decision | null
+  policy: { passed: boolean; failed_check: number | null; reason: string | null } | null
+  evidence: { id: string; tool: string; summary: string }[]
+  commit: string | null
+  branch: string | null
+  diff: string | null
+  pr_number: number | null
+  issue_number: number | null
+}
+
+export interface Activity {
+  time: string
+  incident_id: number
+  text: string
+  url?: string | null
 }
 
 export interface RemediationPr {
@@ -90,7 +125,7 @@ export async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 export const useFleet = () =>
   useQuery({ queryKey: ['fleet'], queryFn: () => getJson<Fleet>('/api/fleet'), refetchInterval: 10_000 })
 
-export const useIncidents = (scope: 'open' | 'all') =>
+export const useIncidents = (scope: 'open' | 'past' | 'archived') =>
   useQuery({
     queryKey: ['incidents', scope],
     queryFn: () => getJson<Incident[]>(`/api/incidents?scope=${scope}`),
@@ -99,6 +134,12 @@ export const useIncidents = (scope: 'open' | 'all') =>
 
 export const useIncident = (id: string | undefined) =>
   useQuery({ queryKey: ['incident', id], queryFn: () => getJson<Incident>(`/api/incidents/${id}`) })
+
+export const useActivity = () =>
+  useQuery({ queryKey: ['activity'], queryFn: () => getJson<Activity[]>('/api/activity'), refetchInterval: 5_000 })
+
+export const useConfig = () =>
+  useQuery({ queryKey: ['config'], queryFn: () => getJson<{ phoenix_url: string }>('/api/config'), staleTime: Infinity })
 
 export const useApprovals = () =>
   useQuery({ queryKey: ['approvals'], queryFn: () => getJson<Approvals>('/api/approvals'), refetchInterval: 30_000 })
