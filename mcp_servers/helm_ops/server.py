@@ -25,7 +25,7 @@ from mcp_servers import common  # noqa: E402
 KUBE_CONTEXT = os.environ.get("KUBE_CONTEXT", "kind-self-healing-iam")
 NAMESPACE = "pingfederate"
 RELEASE = "pingfederate"
-BASE_REF = "main"
+BASE_REF = common.DEFAULT_REF
 MAX_DIFF_CHARS = 20000
 
 mcp = MCPServer("helm_ops")
@@ -42,6 +42,7 @@ def _diff(a: str, b: str, from_name: str, to_name: str) -> tuple[int, str]:
 
 
 @mcp.tool()
+@common.visible_errors
 def helm_render_validate(incident_id: int) -> dict:
     """Render helm/ping-devops twice -- from main, and from the worktree
     branch remediation/inc-<id> (created by repo_config) -- and diff the two,
@@ -105,6 +106,7 @@ def _mask(path: str, value):
 
 
 @mcp.tool()
+@common.visible_errors
 def get_helm_release(key_paths: list[str] | None = None, revisions: list[int] | None = None) -> dict:
     """The deployed Helm release: its revision history (revision, time,
     status, chart, description) and, for the key_paths you ask about, the

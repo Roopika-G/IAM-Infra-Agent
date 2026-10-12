@@ -83,3 +83,21 @@ def test_validate_new_value():
         common.validate_new_value("a\nb")
     with pytest.raises(ValueError):
         common.validate_new_value("")
+
+
+def test_visible_errors_wraps_refusals_but_keeps_value_error_semantics():
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    @common.visible_errors
+    def refuses():
+        raise PermissionError("not allowed here")
+
+    with pytest.raises(ToolError, match="not allowed here"):
+        refuses()
+    with pytest.raises(ValueError):       # existing callers and tests that expect ValueError still work
+        refuses()
+
+    @common.visible_errors
+    def fine():
+        return 5
+    assert fine() == 5

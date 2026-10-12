@@ -34,10 +34,14 @@ DB_DSN = os.environ.get("AGENT_DB_DSN", "postgresql://postgres@localhost:5432/po
 MAX_LOG_ROWS = 100
 MAX_MESSAGE_CHARS = 500
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from mcp_servers import common  # noqa: E402
+
 mcp = MCPServer("knowledge")
 
 
 @mcp.tool()
+@common.visible_errors
 def search_vector(query_text: str, top_k: int = 3) -> list[dict]:
     """Hybrid keyword + vector search over the golden-architecture knowledge
     base. Input is symptom text (e.g. an error message). Returns up to top_k
@@ -49,6 +53,7 @@ def search_vector(query_text: str, top_k: int = 3) -> list[dict]:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_baseline_value(key: str) -> dict:
     """Exact lookup of the frozen known-good value for one config key, e.g.
     'pingfederate-admin.envs.POSTGRES_JDBC_URL'. Returns {key, golden_value,
@@ -65,6 +70,21 @@ def get_baseline_value(key: str) -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
+def list_baseline() -> list[dict]:
+    """Every frozen golden value, as [{key, golden_value, source_file}]. The
+    baseline is small (a few dozen keys at most). Use it for a drift scan:
+    compare each golden_value with get_live_config_value. For values.yaml
+    keys, key is the dotted path into the file and source_file is the file."""
+    with psycopg.connect(DB_DSN) as conn:
+        rows = conn.execute(
+            "SELECT key, golden_value, source_file FROM agent.config_baseline ORDER BY key"
+        ).fetchall()
+    return [{"key": k, "golden_value": g, "source_file": f} for k, g, f in rows]
+
+
+@mcp.tool()
+@common.visible_errors
 def get_logs(
     since: str | None = None,
     until: str | None = None,

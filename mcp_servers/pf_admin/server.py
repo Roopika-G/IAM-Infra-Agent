@@ -33,6 +33,11 @@ API = f"{PF_URL}/pf-admin-api/v1"
 _ID_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,100}$")
 _SECRET_KEY_RE = re.compile(r"password|secret|encrypted|passphrase|privatekey|private_key|token", re.IGNORECASE)
 
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from mcp_servers import common  # noqa: E402
+
 mcp = MCPServer("pf_admin")
 
 
@@ -60,6 +65,7 @@ def _get(path: str) -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_pf_datastore(datastore_id: str) -> dict:
     """A PingFederate datastore's configuration as PF itself holds it, with
     secrets stripped. datastore_id is the id seen in log messages, e.g.
@@ -72,6 +78,7 @@ def get_pf_datastore(datastore_id: str) -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_pf_cluster_status() -> dict:
     """Cluster nodes with address, mode (CLUSTERED_CONSOLE / CLUSTERED_ENGINE),
     version, configurationTimestamp and replicationStatus, plus
@@ -82,6 +89,7 @@ def get_pf_cluster_status() -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_pf_version() -> dict:
     """PingFederate version, e.g. {'version': '13.1.1.0'}."""
     return redact(_get("/version"))
@@ -112,6 +120,7 @@ def _pick(item: dict, fields: tuple) -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_pf_license() -> dict:
     """PingFederate's license as PF reports it: product, version, tier,
     issue and expiration dates, grace period, connection usage, plus
@@ -125,6 +134,7 @@ def get_pf_license() -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_pf_certificates() -> dict:
     """Certificates PingFederate holds, with days_until_expiry for each:
     ssl_server keypairs, signing keypairs and trusted CA certificates. Only

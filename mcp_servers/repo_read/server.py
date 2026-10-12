@@ -8,7 +8,7 @@ diagnosis phase is structurally never handed a write tool.
   read_server_profile_file   -- one server-profile file's content, with its sha256
   diff_vs_golden             -- what changed in a file between a golden ref and another ref
 
-All reads go through `git show` / `git diff` against a ref (default 'main'),
+All reads go through `git show` / `git diff` against a ref (default 'github/main'),
 never the working tree, so they reflect what is committed, not local edits.
 
 Run: uv run python mcp_servers/repo_read/server.py
@@ -28,7 +28,8 @@ mcp = MCPServer("repo_read")
 
 
 @mcp.tool()
-def read_values_yaml_key(key_path: str, ref: str = "main") -> dict:
+@common.visible_errors
+def read_values_yaml_key(key_path: str, ref: str = common.DEFAULT_REF) -> dict:
     """Read one scalar from helm/ping-devops/values.yaml at a git ref.
     key_path is dotted, e.g. 'pingfederate-admin.envs.POSTGRES_JDBC_URL'
     (admin and engine have separate blocks). Returns {key_path, ref, value,
@@ -45,7 +46,8 @@ def read_values_yaml_key(key_path: str, ref: str = "main") -> dict:
 
 
 @mcp.tool()
-def read_server_profile_file(path: str, ref: str = "main") -> dict:
+@common.visible_errors
+def read_server_profile_file(path: str, ref: str = common.DEFAULT_REF) -> dict:
     """Read a file under helm/server-profile/ at a git ref. Returns {path,
     ref, content, truncated, file_sha256}; content is cut at 20000 chars but
     the sha covers the whole file."""
@@ -61,7 +63,8 @@ def read_server_profile_file(path: str, ref: str = "main") -> dict:
 
 
 @mcp.tool()
-def diff_vs_golden(path: str, golden_ref: str, ref: str = "main") -> dict:
+@common.visible_errors
+def diff_vs_golden(path: str, golden_ref: str, ref: str = common.DEFAULT_REF) -> dict:
     """Unified diff of one allowed file between golden_ref (a known-good
     commit, tag or branch) and ref. An empty diff means the file matches the
     golden version. Returns {path, golden_ref, ref, diff, truncated}."""
@@ -88,10 +91,11 @@ MAX_MATCH_CHARS = 200
 
 
 @mcp.tool()
-def find_in_repo(text: str, ref: str = "main") -> dict:
+@common.visible_errors
+def find_in_repo(text: str, ref: str = common.DEFAULT_REF) -> dict:
     """Case-insensitive plain-text search over the two files the agent may
     diagnose: helm/ping-devops/values.yaml and helm/server-profile/**, at a
-    git ref (default main). Returns up to 30 matches as {path, line,
+    git ref (default github/main). Returns up to 30 matches as {path, line,
     key_path, text}; for values.yaml, key_path is the exact dotted path to
     pass to read_values_yaml_key / the patch tools (null if the hit is in a
     comment). Use it to find where a value, tag or key is set when you do

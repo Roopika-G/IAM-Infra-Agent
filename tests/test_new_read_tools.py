@@ -142,3 +142,12 @@ def test_find_in_repo_returns_exact_key_paths():
             repo.find_in_repo(bad)
     with pytest.raises(ValueError):
         repo.find_in_repo("x", ref="-evil")
+
+
+def test_github_issue_input_refusals():
+    gh = load("github_pr")
+    for title, body in [("", "x"), ("a\nb", "x"), ("t", "  "), ("t", "x" * 20001)]:
+        with pytest.raises(ValueError):
+            gh.create_github_issue(title, body)
+    with pytest.raises(ValueError):
+        gh.create_github_issue("t", "b", incident_id=-3)

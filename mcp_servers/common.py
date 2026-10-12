@@ -7,15 +7,21 @@ Kept free of MCP imports so it can be unit-tested directly
 git is always invoked with an argument list.
 """
 
+import functools
 import hashlib
 import re
 import subprocess
 from pathlib import Path, PurePosixPath
 
 import yaml
+from mcp.server.mcpserver.exceptions import ToolError
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKTREES_DIR = REPO_ROOT / ".worktrees"
+
+# The agent works from what is on GitHub (the freshly fetched remote branch), not from a local main
+# that may be behind after a human merges a pull request.
+DEFAULT_REF = "github/main"
 
 VALUES_FILE = "helm/ping-devops/values.yaml"
 SERVER_PROFILE_PREFIX = "helm/server-profile/"
@@ -24,6 +30,26 @@ PROPERTIES_SUFFIXES = (".properties", ".properties.subst")
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/\-]*$")
 _PROTECTED_KEY_RE = re.compile(r"PASSWORD|SECRET|LICENSE|JWK|PRIVATE|TOKEN|PASSPHRASE", re.IGNORECASE)
 _PLAIN_SAFE_RE = re.compile(r"^[A-Za-z0-9_./@-]+$")
+
+
+class Refusal(ToolError, ValueError):
+    """A tool refused or failed for a reason the caller should see. ToolError
+    makes the MCP server pass the message to the model; the server otherwise
+    replaces any other exception with a bare 'Error executing tool X'."""
+
+
+def visible_errors(fn):
+    """Decorator for tool functions (apply under @mcp.tool()): re-raise the
+    errors our tools raise on purpose as Refusal, so the agent can read why."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ToolError:
+            raise
+        except (ValueError, PermissionError, RuntimeError, KeyError) as e:
+            raise Refusal(str(e) or type(e).__name__) from e
+    return wrapper
 
 
 def sha256_text(text: str) -> str:

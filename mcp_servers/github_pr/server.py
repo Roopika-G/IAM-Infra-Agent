@@ -6,8 +6,9 @@ exposed surface is exactly three narrow tools and nothing else.
   push_remediation_branch  -- push remediation/inc-<id> (never force, never any other ref)
   create_pull_request      -- open a PR from that branch into main
   add_pr_comment           -- comment on a remediation PR (e.g. the helm dry-run output)
+  create_github_issue      -- open an issue to hand a problem to a human (escalation)
 
-Deliberately NOT here: merge, approve, close, review, or any repo setting.
+Deliberately NOT here: merge, approve, close, review, or any repo setting. (create_github_issue only ever opens a new issue.)
 A human merges; branch protection on main (Phase 10) enforces it. These
 tools can only touch branches named remediation/inc-<number> and PRs whose
 head is such a branch.
@@ -59,6 +60,7 @@ def _validate_text(title: str | None, body: str) -> None:
 
 
 @mcp.tool()
+@common.visible_errors
 def push_remediation_branch(incident_id: int) -> dict:
     """Push the local branch remediation/inc-<incident_id> (created by
     repo_config) to GitHub. Only that one branch, never forced. Returns
@@ -70,6 +72,7 @@ def push_remediation_branch(incident_id: int) -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def create_pull_request(incident_id: int, title: str, body: str) -> dict:
     """Open a pull request from remediation/inc-<incident_id> into main. The
     branch must already be pushed (push_remediation_branch). body should
@@ -85,6 +88,7 @@ def create_pull_request(incident_id: int, title: str, body: str) -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def add_pr_comment(pr_number: int, body: str) -> dict:
     """Comment on a remediation pull request (one whose head branch is
     remediation/inc-<n>). Refuses any other PR. Returns {pr_number, url}."""
@@ -99,6 +103,27 @@ def add_pr_comment(pr_number: int, body: str) -> dict:
         f.flush()
         url = _gh("pr", "comment", str(pr_number), "--body-file", f.name)
     return {"pr_number": pr_number, "url": url}
+
+
+@mcp.tool()
+@common.visible_errors
+def create_github_issue(title: str, body: str, incident_id: int | None = None) -> dict:
+    """Open a GitHub issue to hand a problem to a human: the escalation path
+    when the agent cannot or must not fix something itself (a secret, a
+    license, a policy refusal, an unclear cause). body should be the full
+    report: what happened, what was checked, what was found, what was ruled
+    out, and what a human must do. incident_id, if given, is prefixed to the
+    title. Returns {url, number}. Creates an issue only; it cannot edit or
+    close anything."""
+    if incident_id is not None and (not isinstance(incident_id, int) or incident_id <= 0):
+        raise ValueError("incident_id must be a positive integer")
+    _validate_text(title, body)
+    full_title = f"[incident #{incident_id}] {title}" if incident_id else title
+    with tempfile.NamedTemporaryFile("w", suffix=".md") as f:
+        f.write(body)
+        f.flush()
+        url = _gh("issue", "create", "--title", full_title, "--body-file", f.name)
+    return {"url": url, "number": int(url.rstrip("/").rsplit("/", 1)[-1])}
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ from mcp.server.mcpserver import MCPServer
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from mcp_servers import common  # noqa: E402
 
-BASE_REF = "main"
+BASE_REF = common.DEFAULT_REF       # every attempt branches from what is on GitHub right now
 AGENT_IDENTITY = ["-c", "user.name=self-healing-iam-agent", "-c", "user.email=agent@self-healing-iam.local"]
 MAX_DIFF_CHARS = 20000
 
@@ -73,6 +73,7 @@ def _apply(incident_id: int, rel_path: str, expected_sha: str, patcher, descript
 
 
 @mcp.tool()
+@common.visible_errors
 def patch_helm_values(key_path: str, new_value: str, expected_file_sha256: str, incident_id: int) -> dict:
     """Change one scalar in helm/ping-devops/values.yaml on the local branch
     remediation/inc-<incident_id> (created from main if new). key_path is
@@ -94,6 +95,7 @@ def patch_helm_values(key_path: str, new_value: str, expected_file_sha256: str, 
 
 
 @mcp.tool()
+@common.visible_errors
 def patch_server_profile(path: str, key: str, new_value: str, expected_file_sha256: str, incident_id: int) -> dict:
     """Change one key=value line in a .properties or .properties.subst file
     under helm/server-profile/ on the local branch remediation/inc-<id>.

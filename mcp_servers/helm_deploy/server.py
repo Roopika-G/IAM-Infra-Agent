@@ -58,6 +58,7 @@ def _status() -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def helm_upgrade_release(commit_sha: str, token: str, timeout: str = "10m", restart_pods: bool = True) -> dict:
     """Deploy helm/ping-devops exactly as it exists at commit_sha with
     `helm upgrade --install --atomic --wait` (a failed rollout rolls itself
@@ -85,11 +86,15 @@ def helm_upgrade_release(commit_sha: str, token: str, timeout: str = "10m", rest
     if restart_pods:
         _run("kubectl", "--context", KUBE_CONTEXT, "rollout", "restart", "deployment",
              "--namespace", NAMESPACE, "-l", f"app.kubernetes.io/instance={RELEASE}")
+    # Do not return until the pods are actually back, so the caller can verify straight away.
+    _run("kubectl", "--context", KUBE_CONTEXT, "rollout", "status", "deployment",
+         "--namespace", NAMESPACE, "-l", f"app.kubernetes.io/instance={RELEASE}", f"--timeout={timeout}")
 
     return {**_status(), "commit": commit_sha}
 
 
 @mcp.tool()
+@common.visible_errors
 def helm_rollback_release(revision: int, token: str, timeout: str = "10m") -> dict:
     """Roll the release back to a previous Helm revision (`helm rollback
     --wait`). Returns {revision, status} of the release afterwards."""

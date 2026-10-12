@@ -31,6 +31,11 @@ NAMESPACE = "pingfederate"
 MAX_EVENTS = 50
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from mcp_servers import common  # noqa: E402
+
 mcp = MCPServer("kubernetes")
 
 _core: client.CoreV1Api | None = None
@@ -82,6 +87,7 @@ def _pod_summary(pod) -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_pod_status(pod: str | None = None) -> list[dict]:
     """Status of pods in the pingfederate namespace. With no pod name,
     returns every pod (use this first to discover names). Each entry is
@@ -98,6 +104,7 @@ def get_pod_status(pod: str | None = None) -> list[dict]:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_events(pod: str | None = None, limit: int = 20) -> list[dict]:
     """Kubernetes events in the pingfederate namespace, newest first
     (e.g. image pull failures, probe failures, restarts). Optionally filter
@@ -122,6 +129,7 @@ def get_events(pod: str | None = None, limit: int = 20) -> list[dict]:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_live_config_value(pod: str, key: str, container: str | None = None) -> dict:
     """The value of one environment variable as the running container
     actually sees it (not what a ConfigMap or values.yaml says -- an env
@@ -257,6 +265,7 @@ def _secret_summary(sec) -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_pod_logs(pod: str, container: str | None = None, previous: bool = False, tail_lines: int = 100, contains: str | None = None) -> dict:
     """Recent log lines straight from a container (what the container itself
     printed), unlike get_logs which reads PingFederate's shipped log table.
@@ -285,6 +294,7 @@ def get_pod_logs(pod: str, container: str | None = None, previous: bool = False,
 
 
 @mcp.tool()
+@common.visible_errors
 def get_pod_spec(pod: str) -> dict:
     """What a pod is configured to run, as Kubernetes holds it: per
     container the image (and tag), pull policy, resource requests/limits,
@@ -299,6 +309,7 @@ def get_pod_spec(pod: str) -> dict:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_workload_status(name: str | None = None) -> list[dict]:
     """Desired vs ready replicas for Deployments and StatefulSets in the
     pingfederate namespace (all of them, or just the one called name). Shows
@@ -318,6 +329,7 @@ def get_workload_status(name: str | None = None) -> list[dict]:
 
 
 @mcp.tool()
+@common.visible_errors
 def get_secret_keys(name: str) -> dict:
     """Metadata about a Kubernetes Secret in the pingfederate namespace:
     which keys it holds, their sizes, when it was created and last modified.
