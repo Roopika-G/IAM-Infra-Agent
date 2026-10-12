@@ -8,9 +8,14 @@ written from for why that's not a useful decision to hand to an LLM.
 """
 
 import os
+from pathlib import Path
 import sys
 
 import psycopg
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")  # keys live in the repo-root .env (never overrides your shell)
 
 DB_DSN = os.environ.get("AGENT_DB_DSN", "postgresql://postgres@localhost:5432/postgres")
 RRF_K = 60  # standard reciprocal-rank-fusion constant, not tuned

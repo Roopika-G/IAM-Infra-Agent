@@ -20,6 +20,10 @@ from pathlib import Path
 import psycopg
 import yaml
 
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")  # keys live in the repo-root .env (never overrides your shell)
+
 DB_DSN = os.environ.get("AGENT_DB_DSN", "postgresql://postgres@localhost:5432/postgres")
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VALUES_PATH = REPO_ROOT / "helm" / "ping-devops" / "values.yaml"

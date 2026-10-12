@@ -23,3 +23,9 @@ infrastructure/terraform.tfvars
 
 # Remediation worktrees created by mcp_servers/repo_config
 .worktrees/
+
+# Local runtime keys (LLM key, DB and PF passwords). .env.example is the committed template.
+/.env
+
+# Logs and pids from ./start-all.sh
+/.run/
