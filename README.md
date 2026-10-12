@@ -161,7 +161,10 @@ not a script that blinks the fault on and off automatically.
 ./Error_Simulation/sim_a_jdbc_url.sh inject
 ```
 
-Corrupts PF's JDBC datastore URL to a nonexistent host and redeploys.
+Corrupts PF's JDBC datastore URL to a nonexistent host, **commits and pushes
+that change to `main`** (a simulated bad commit, so the repo holds the fault and
+the agent's fix is a real PR), and redeploys. It refuses unless you are on
+`main` with no uncommitted edits to `values.yaml`; `SIM_A_PUSH=0` skips the push.
 Both pods stay `2/2 Running` — this fault doesn't crash PF, it just makes
 one specific datastore connection fail, logging a real `ERROR`. Watch it
 come back up:
@@ -269,30 +272,137 @@ Things worth knowing:
   actually sees, which can differ from the ConfigMap, since env vars are
   fixed at container start.
 
-## UI
-
-A dashboard over the same sources the agent's tools use: fleet health (pods,
-restarts, PingFederate config replication), configuration drift (frozen
-baseline vs what each running container actually sees), incidents with a
-detail page, remediation pull requests, and a Simulations page for Sim A.
-React + Vite + TypeScript frontend (`ui/web`), FastAPI JSON backend
-(`ui/app.py`, `ui/data.py`). Localhost only, no authentication — the
-Simulations page can redeploy the cluster.
+## Running the demo (one command)
 
 ```sh
-export AGENT_DB_DSN="postgresql://postgres:$(kubectl -n pingfederate get secret postgres-credentials -o jsonpath='{.data.POSTGRES_JDBC_PASSWORD}' | base64 -d)@localhost:5432/postgres"
-export PF_ADMIN_PASSWORD="$(kubectl -n pingfederate get secret pingfederate-license -o jsonpath='{.data.PING_IDENTITY_PASSWORD}' | base64 -d)"
-
-cd ui/web && npm install && npm run build && cd ../..   # once, and after frontend changes
-uv run uvicorn ui.app:app --port 8000                     # serves API + built app at http://localhost:8000
-
-# frontend development with hot reload (second terminal): cd ui/web && npm run dev  → http://localhost:5173
+./create-env.sh        # once: creates .env from the cluster's Secrets; then paste ANTHROPIC_API_KEY into it
+./start-all.sh         # starts Phoenix, the detector, the agent worker and the UI in the background
+# UI      http://localhost:8000     Phoenix  http://localhost:6006
+./stop-all.sh          # stops them (logs and pids are in .run/)
 ```
 
-Without `PF_ADMIN_PASSWORD` the fleet view still works but hides replication
-status. Incidents only update when `agent/detector.py` runs; fleet and drift
-are read live (cached ~8s). The incident detail's Diagnosis / Proposed fix /
-Attempts sections stay empty until the diagnosis agent exists.
+Then open the UI and press **Trigger incident (Sim A)**. Merge the PR it opens on GitHub; the worker deploys it within about 15 seconds. What happens:
+the script commits a broken JDBC URL to `main` and redeploys; PingFederate logs
+the error; the detector turns it into an incident; the worker starts the agent;
+the agent diagnoses it and opens a pull request for you to review; the UI shows
+"Agent opened PR #N for human approval". Follow the agent step by step in
+Phoenix (link on the dashboard). Allow a minute or two: the pods restart first.
+
+## UI
+
+A deliberately simple dashboard (React + FastAPI, `ui/`): a **Trigger incident**
+button, a **Phoenix** link, the **fleet** (pods, restarts, config replication), an
+**agent activity** feed ("Agent opened PR #14 for human approval"), and the
+**incidents** with tabs Open / Past / Archived. An incident page shows what the
+agent did, its diagnosis, the fix (the change, the diff, the branch, the commit,
+the PR), the evidence, and the policy verdict. It reads the agent's record from
+Postgres; it does not show every step. That detail is in Phoenix.
+
+Incident statuses and what the worker does at each:
+
+| Status | Meaning | The worker |
+|---|---|---|
+| `NEW` | detected | starts the agent (Sim A errors only, seen in the last 15 min) |
+| `DIAGNOSING` | agent working | waits |
+| `WAITING_FOR_PR_REVIEW` | agent opened a PR | **waits**. The same error occurring again only adds to this incident; no second agent is started |
+| `MERGED` | a human merged the PR (checked every 15 s) | **deploys that exact merge commit** |
+| `DEPLOYING` | helm upgrade, then a check | waits |
+| `RESOLVED` | deployed and verified | **closed for good**; never touched again |
+| `RETRY` | the deploy failed the check and was rolled back | starts the agent again, told what the last attempt did and how it failed |
+| `FAILED` | out of attempts (2 in total) | stops; opens a GitHub issue for a human |
+| `PR_REJECTED` | a human closed the PR without merging | stops; waits for a human |
+| `ESCALATED` | the agent opened an issue instead of a PR | waits for a human |
+
+The deploy check: all pods ready, no config drift, and the error has not come
+back for 60 s. A failed check rolls back to the revision that was running before
+the upgrade. For now the worker does the deploy by itself, in plain code; the
+LLM is not given the deploy tool (see `agent/deploy.py`) and is only brought
+back after a failed check. Every attempt starts from a fresh branch off GitHub's
+`main`, and the agent reads `github/main` (what is on GitHub), not a local copy.
+PingFederate's known harmless startup warnings are not turned into incidents
+(`agent/known_noise.py`).
+
+Manual start, if you prefer terminals:
+
+```sh
+cd ui/web && npm install && npm run build && cd ../..     # once, and after frontend changes
+uv run uvicorn ui.app:app --port 8000
+# frontend development with hot reload: cd ui/web && npm run dev  -> http://localhost:5173
+```
+
+Localhost only, no authentication: the trigger button commits to `main` and
+redeploys the cluster.
+
+## Where the agent's activity is recorded
+
+- **Postgres** (`agent.runs`, `agent.run_events`): the permanent record. One run
+  per agent invocation, and one event per step in order: the prompt, each LLM call
+  (what it was shown and answered, tokens, time), each tool call (arguments and
+  the full result), the evidence, the decision, the 10 policy checks and the
+  outcome. The incident page is built from it.
+- **Phoenix** (optional, `uv sync --extra tracing`): a live visual trace of the same
+  run: the graph's nodes, every LLM call with its prompt and answer, and every
+  tool call. Enabled by `PHOENIX_COLLECTOR_ENDPOINT` in `.env`; the data stays on
+  your machine.
+
+## The agent (Sim A first)
+
+`agent/` is a LangGraph agent, written with Pydantic models and plain, short
+modules. For Sim A (the JDBC URL fault) it diagnoses, and if the fix is a change
+to `values.yaml` it opens a pull request for a human to review. It never merges
+and never touches the live cluster.
+
+```
+intake -> agent <-> tools -> decision -> policy -> apply_fix -> PR opened
+                                            |            |
+                                            +----------> escalate -> GitHub issue
+```
+
+| File | What it is |
+|---|---|
+| `agent/schemas.py` | every data shape (Pydantic): incident, evidence, snapshot, decisions, policy result, graph state |
+| `agent/graph.py` | the graph: nodes and routing, read top to bottom |
+| `agent/intake.py` | takes the system snapshot (pods, drift scan, license and certificate days, replication, recent errors) |
+| `agent/policy.py` | the policy check: 10 checks, run in order, first failure stops it |
+| `agent/decisions.py` | the decision tools the LLM ends with: `propose_repo_fix`, `escalate` |
+| `agent/toolbox.py` | connects to the MCP servers; the LLM gets read tools only |
+| `agent/prompts/` (3 files) | what the LLM reads: `system`, `trigger_message`, `forced_decision` |
+| `agent/templates/` (2 files) | layouts code fills in: the GitHub issue (`escalation_report`) and the PR description (`pr_body`) |
+| `agent/prompt_loader.py` | loads and fills them by name |
+| `agent/trigger.py`, `agent/worker.py` | start the agent for new Sim A incidents |
+| `agent/run.py` | run the agent on one incident |
+| `agent/store.py`, `agent/llm.py`, `agent/settings.py` | incident table access, the chat model, settings |
+
+Keys live in a repo-root `.env` (gitignored, mode 600). One-time setup:
+
+```sh
+./create-env.sh        # creates .env and fills AGENT_DB_DSN + PF_ADMIN_PASSWORD from the cluster's Secrets
+# then open .env and paste your ANTHROPIC_API_KEY
+```
+
+Where each secret comes from: the Postgres password is generated by Terraform and
+stored only in the `postgres-credentials` Secret; the PF admin password and the
+license/key files come from `infrastructure/.env` into the `pingfederate-license`
+Secret. The cluster is the source of truth, so `create-env.sh` copies from it and
+can be rerun whenever the cluster is rebuilt. `ANTHROPIC_API_KEY` is the only
+secret that exists nowhere else. The agent, detector, search scripts and UI
+backend all read `.env` themselves; a value already set in your shell wins.
+
+Run it end to end with `./start-all.sh` (see "Running the demo" above), or start the pieces by hand:
+
+```sh
+uv run python agent/detector.py        # 1: writes incidents from the logs
+uv run python -m agent.worker          # 2: starts the agent for each new Sim A incident (only incidents from the last 15 minutes)
+./Error_Simulation/sim_a_jdbc_url.sh inject   # 3: commits + pushes a broken URL, redeploys
+```
+
+or on an incident that already exists: `uv run python -m agent.run --incident 7`.
+The agent opens a real branch and pull request (or a GitHub issue) on this repo.
+
+`uv run pytest` runs the whole suite (no API key or cluster needed). The agent
+tests drive the real graph with a scripted stand-in for the LLM and fake tools,
+and one test starts a real MCP server. What they cannot show is how the real
+model behaves: that is what the live run is for.
 
 ## Accessing services from your host
 
@@ -378,7 +488,7 @@ mcp_servers/            MCP tool servers (see "MCP servers" above)
   common.py              shared path/ref validation, git wrapper, YAML + properties patching
   knowledge/ kubernetes/ pf_admin/ repo_read/ helm_ops/   read-only
   repo_config/ helm_deploy/ github_pr/                    write-capable
-agent/
+agent/                  the LangGraph agent (see "The agent" above)
   signature.py         normalizes + fingerprints a log message
   detector.py           polls pf_logs_raw, dedups into agent.incidents
   embeddings.py         local embeddings (BAAI/bge-small-en-v1.5)

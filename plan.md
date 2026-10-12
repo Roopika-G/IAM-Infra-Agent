@@ -30,6 +30,131 @@ Revised during Phase 1 execution: the spec's stack table lists "1 control-plane 
 - **Eval harness (old Phase 14): kept as V1**, not dropped. Renumbered, content unchanged.
 - **Simulation count: staying at two** (Sim A, Sim B `ImagePullBackOff`), not expanded to the README's seven lettered scenarios. Sim A was originally the `SERVER_PROFILE_PATH` profile-path trap; live-tested and redefined to `POSTGRES_JDBC_URL` corruption instead (see Phase 5's "Live test findings, and Sim A redefined") once the profile-path trap turned out to produce zero log signal. The README's other scenarios (JDBC placeholder, OOM, profile-not-applied, protected-credential escalation) remain good V2 candidates but out of scope for this plan.
 
+## Status tracker — issues the agent addresses, and what is built (keep this section current)
+
+Last updated: 2026-10-12 (agent, run log, Phoenix, simple UI built). Current focus: S1 only, see "Agent build plan" below.  Legend: ✅ done · ⬜ pending · ➖ not applicable.
+
+**Fix class:** R = a repo PR fixes it · A = a human-approved runtime action · H = human only, the agent escalates and never touches it.
+
+### The issues
+
+| # | Issue | Fix class | Starts as | Injection script | Detected | Read tools | Prompt tried in Langflow | Fix / escalate path built | Verified end to end |
+|---|---|---|---|---|---|---|---|---|---|
+| S1 | JDBC URL points at a nonexistent host (Sim A) | R | log error | ✅ now commits and pushes the broken value (guards tested, not yet run) | ✅ log detector + worker | ✅ | ⬜ | ✅ built, tested with a scripted LLM | ⬜ |
+| S2 | Bad image tag (Sim B), set at `global.image.tag` | R | pod state, no log | ⬜ | ⬜ needs pod-state watcher | ✅ | ⬜ | ⬜ | ⬜ |
+| S3 | Postgres down (StatefulSet scaled to 0) | A | log errors + pod state | ⬜ | ⬜ log detector untested on it; watcher missing | ✅ | ⬜ | ⬜ needs `kube_actions` | ⬜ |
+| S4 | Bad value in a server-profile properties file | R | log error | ⬜ | ⬜ log detector untested on it | ✅ | ⬜ | ⬜ | ⬜ |
+| S5 | Wrong database password | H | log error | ⬜ | ⬜ log detector untested on it | ✅ | ⬜ | ⬜ needs `create_github_issue` | ⬜ |
+| S6 | TLS misconfig on the JDBC URL (`sslmode=verify-full`) | R | log error | ⬜ | ⬜ log detector untested on it | ✅ | ⬜ | ⬜ | ⬜ |
+| S7 | Certificate nearing expiry | A | scheduled scan, no log | ⬜ (short-lived keypair via PF API, endpoint unverified) | ⬜ needs certificate scanner | ✅ | ⬜ | ⬜ needs `pf_actions` (renew endpoint unverified) | ⬜ |
+| S8 | License nearing expiry (real: 2027-01-20) | H | scheduled scan, no log | ➖ real condition | ⬜ needs license scanner | ✅ | ⬜ | ⬜ needs `create_github_issue` | ⬜ |
+| S9 | License / version mismatch after an upgrade | R + H | pod state + log | ⬜ (behaviour unverified, may be dropped) | ⬜ needs watcher | ✅ | ⬜ | ⬜ | ⬜ |
+
+Stretch, not committed: missing env var (needs an add-key patch tool) · memory limit too low (OOM) · cluster replication broken · Fluent Bit misconfigured (no logs arrive).
+Dropped from V1: `SERVER_PROFILE_PATH` wrong (no log line at all; only a drift scan could catch it).
+
+### Shared building blocks
+
+| Block | Status | Notes |
+|---|---|---|
+| Log detector (`agent/detector.py`), fingerprint dedup | ✅ | verified live on Sim A's error |
+| Pod-state watcher (S2, S3, S9) | ⬜ | k8s watch with reconnect handling |
+| Scheduled scanners: config drift, certificate days, license days (S7, S8) | ⬜ | the drift check already exists in the UI's data layer |
+| Read MCP tools: knowledge 3, kubernetes 7, pf_admin 5, repo_read 4, helm_ops 2 | ✅ | 21 tools incl. the helm render check; unit-tested and run against the live cluster |
+| Write MCP: `repo_config` (patch), `github_pr` (push, PR, comment), `helm_deploy` (CI/CD only) | ✅ built · ⬜ not exercised live | only input refusals are tested |
+| `create_github_issue` (every escalation) | ✅ | in `github_pr`; input refusals tested, not yet run against GitHub |
+| `kube_actions` (rollout restart, scale) and `pf_actions` (renew certificate), human-approved | ⬜ | gated by the Phase 11 token flow |
+| Knowledge docs covering S2 to S9 symptoms | ⬜ | `known-faults.md` only covers S1; S7 has no renewal runbook |
+| Baseline for image tag, resources, probes | ⬜ | baseline holds 9 env keys only |
+| A git ref marking a known-good state (for `diff_vs_golden`) | ⬜ | needed by S4 and policy check 3 |
+| Retrieval relevance cutoff (treat a poor match as "no docs") | ⬜ | S4's search finds nothing |
+| Agent prompts drafted as files (`agent/prompts/`) | ✅ | drafts, not yet finalized |
+| Agent prototyped in Langflow (prompts finalized) | ⬜ | `~/langflow-sandbox` is set up (`run.sh`); it stops when Docker restarts. The agent code now exists, so a live run with the real model may replace this |
+| LangGraph agent: intake · agent loop · decision · policy · routing · apply fix · escalate | ✅ built for S1 | `agent/`, Pydantic models, prompts in `agent/prompts/` (3), output templates in `agent/templates/` (2); 67 tests pass with a scripted LLM. ⬜ not yet run with a real LLM or the live cluster. Approval and verify nodes arrive with runtime actions |
+| Policy check (10 checks) as code | ✅ checks 1,2,3,4,6,7,8,10 | `agent/policy.py`; checks 5 (command allowlist) and 9 (action budget) arrive with runtime actions; thresholds (3 keys) are guesses |
+| Bounded retry loop (cap 2), attempts record | ⬜ | built after CI/CD |
+| CI/CD: merge, deploy, verify, rollback (Phase 12) | ⬜ | |
+| SPIFFE / authorization tokens (Phase 11) | ⬜ | `helm_deploy` uses an interim token |
+| UI: dashboard, incident detail, approvals list, simulations | ✅ | React + FastAPI |
+| UI: trigger button, Phoenix link, agent activity feed, incident results (Open / Past / Archived) | ✅ | simple by design; it reads the Postgres run record. Approve/reject buttons are not needed for the PR path (a human merges on GitHub) |
+| Run log in Postgres (`agent.runs`, `agent.run_events`) | ✅ | every node, LLM call, tool call (full result), evidence, decision, policy check, outcome; tested, written live once with a scripted run |
+| Phoenix tracing (`agent/tracing.py`, `uv sync --extra tracing`) | ✅ wired and tested | 26 spans received from a scripted run, including the tool calls our own code makes. ⬜ not yet seen with a real LLM |
+| `./start-all.sh` / `./stop-all.sh` | ✅ | starts Phoenix, detector, worker, UI; tested |
+| Worker notices a human merging or closing the PR (`MERGED` / `PR_REJECTED`) | ✅ | `agent/pr_sync.py`; `RESOLVED` still needs CI/CD verify |
+| Retrieval eval (14 labelled queries) | ✅ | optimistic; written by the same person who wrote the docs |
+
+### Open decisions
+
+1. Should Sim A's inject script commit and push the broken value? Without it the repo still holds the good value and a fix PR would be empty.
+2. Typed tools only, or add wide tools where the LLM supplies the exact command or diff (validated)?
+3. Which issues make up V1? S1 is built first (decided 2026-10-12); the rest follow once it works. (Suggested V1: S1, S2, S3, S4, S5, S7, S8 plus S6; S9 may be dropped.)
+4. LLM provider and key for the agent.
+
+## Agent build plan — Sim A (S1) first
+
+Decided 2026-10-12: build the agent for **Sim A only** (S1: `POSTGRES_JDBC_URL` points at a nonexistent host). S2 to S9 follow once S1 works end to end, reusing the same graph; each later issue should need new tools, knowledge docs and an injection script, not a new graph.
+
+### The flow for S1
+
+```
+ detector (built) sees "Unable to load custom data source instance" and starts the agent
+   ▼
+ 1 INTAKE (code) ─ snapshot: pods, drift scan (9 baseline keys vs live), cert + license days, replication, recent errors
+   ▼
+ 2 AGENT ⇄ 3 TOOLS ─ one LLM investigates with read tools (max 8 calls; then forced to decide)
+   ▼  ends with ONE decision tool: propose_repo_fix | escalate      (request_runtime_action is not used by S1)
+ POLICY (code) ─ checks 1,2,3,4,6,7,8,10 for a repo fix; 7,8,10 for an escalate. First failure downgrades to escalate.
+   ▼
+ ROUTE ─ passed + repo_fix ► 4a Apply fix: read sha → patch_helm_values → helm_render_validate → push branch → open PR → add render comment
+         anything else      ► 4c Escalate: report → GitHub issue
+   ▼
+ a human merges the PR ─ CI/CD deploys that commit and verifies (error gone, drift clean); a failed verify rolls back and retries once (cap 2)
+```
+
+Prompts: `agent/prompts/` (system, trigger_message, forced_decision; drafts) and `agent/templates/` (the issue and PR layouts). A retry prompt will be added when the retry loop is built. State, policy rules and routing are specified in the interactive graph page and in this file's tracker.
+
+### Tools S1 needs
+
+| Node | Tool | Status |
+|---|---|---|
+| intake / agent | `get_pod_status`, `get_logs`, `get_pf_cluster_status`, `get_pf_license`, `get_pf_certificates`, `get_baseline_value`, `get_live_config_value` | ✅ built |
+| agent | `search_vector`, `read_values_yaml_key`, `get_pf_datastore`, `find_in_repo`, `get_helm_release` | ✅ built |
+| 4a apply fix | `read_values_yaml_key` (sha), `patch_helm_values`, `helm_render_validate` | ✅ built and run live (throwaway incident, branch removed afterwards) |
+| 4a apply fix | `push_remediation_branch`, `create_pull_request`, `add_pr_comment` | ✅ built · ⬜ not yet run against GitHub (needs a go-ahead: it creates a real branch and PR) |
+| 4c escalate | `create_github_issue` | ⬜ **the only missing tool for S1** |
+| after merge | `helm_upgrade_release`, `helm_rollback_release` | ✅ built · ⬜ not yet run; nothing calls them until CI/CD exists |
+
+Not needed for S1: `request_runtime_action` and its servers (`kube_actions`, `pf_actions`), the approval step, the pod-state watcher, the scheduled scanners, `patch_server_profile`.
+
+### Pending tools (whole project)
+
+| Tool | Server | Needed for | Blocks S1? |
+|---|---|---|---|
+| `create_github_issue` | `github_pr` | every escalation (S1 failure path, S5, S8, S9) | **yes** |
+| `rollout_restart`, `scale_workload` | new `kube_actions`, human-approved | S3 | no |
+| `renew_certificate` | new `pf_actions`, human-approved, endpoint unverified | S7 | no |
+| add a new key to `values.yaml` | `repo_config` | stretch: missing env var | no |
+| wide tools (LLM supplies the exact command or diff, validated) | undecided | generality | no |
+
+### Status of the S1 build steps
+
+1. ✅ **Sim A injects a bad commit.** `inject` and `restore` now commit and push the value to `main`, then deploy. Refuses off `main` or with uncommitted edits to `values.yaml` (guards tested; the script itself not yet run, because it pushes to `main` and redeploys). `SIM_A_PUSH=0` skips the push.
+2. ⬜ **Finalize the prompt against the live fault** (inject, run, restore) and read what the real model does. Check it cites evidence, uses the drift result first, and says so when the fault is no longer present.
+3. ✅ **`create_github_issue`** in `github_pr` (also `list_baseline` in `knowledge`, for the drift scan).
+4. ✅ **Intake in code** (`agent/intake.py`): pods, drift scan over MCP, license and certificate days, replication, recent errors; an unreachable source is recorded, not fatal.
+5. ✅ **LangGraph graph** (`agent/graph.py`): agent loop with an 8-call budget and a forced decision, decision tools, policy, apply fix, escalate.
+6. ✅ **Trigger wiring**: `agent/trigger.py` (Sim A signature only) and `agent/worker.py`, which claims each new incident once and runs the agent. Run beside `agent/detector.py`.
+7. ⬜ **LLM key**: Anthropic is wired (`agent/llm.py`, model from `AGENT_MODEL`, default `claude-haiku-5-5`). Keys now live in a gitignored repo-root `.env` (`./create-env.sh` fills the DB and PF passwords from the cluster's Secrets; `ANTHROPIC_API_KEY` is still empty and needs pasting in). The agent's intake step has run live against the cluster using only `.env`.
+8. ✅ **Live run, 2026-10-12**: inject -> incident -> agent (Haiku 5.5, 2 LLM calls, about 16.7k tokens, 18 s) -> PR #1 -> human merge -> deploy -> verified -> `RESOLVED`. Found and fixed along the way: tool timeout type, Helm left in `pending-rollback` after a killed deploy (fixed by deleting that one release record), rollback target (now the revision deployed before the upgrade), duplicate incidents while an incident was `FAILED` (now `RETRY` keeps it open), the inject commit sweeping in unrelated staged files (now commits only `values.yaml`).
+9. ✅ **Minimal CI/CD for S1** (`agent/deploy.py`, run by the worker): when a PR is merged, deploy that exact commit with `helm_upgrade_release`, wait for the pods, check (pods ready, 0 drift, error not back for 60 s), roll back to the previously deployed revision on failure, then `RESOLVED` or `RETRY` (max 2 attempts, then `FAILED` + a GitHub issue). For now the worker deploys by itself in plain code; the LLM does not get the deploy tool and returns only on a failed check.
+10. ✅ for the scripted LLM, ⬜ live: **negative tests** (value not golden, secret key, invented evidence id, low confidence, PR already in flight, failed render check, failing write tool, budget exhausted, invalid decision arguments, agent that never decides) all pass in `tests/test_agent.py`. Still to see live: a run where the fault is already gone must escalate honestly.
+
+Old incidents: all 12 from earlier testing were set to `ARCHIVED` on 2026-10-12, the detector cursor was moved to now, and the one-open-incident-per-fingerprint rule now also excludes `ARCHIVED` (otherwise the next Sim A error would have folded into archived incident #7 and never triggered the agent). The worker only claims incidents seen in the last 15 minutes. Expect PingFederate's startup warnings to open fresh incidents after every pod restart; they do not match Sim A, so the agent ignores them.
+
+Found while building: the MCP server hid every refusal reason behind "Error executing tool X". Fixed for all tools (`common.visible_errors`), so the agent now reads why a tool refused. And this Claude model rejects `temperature`, so `agent/llm.py` does not set one.
+
+**Exit criteria for S1:** from `inject` to an open PR with the correct two-line diff, the diagnosis and the evidence attached, with no manual step except the human merge; after merge and deploy the incident is resolved; and every negative test above is refused or escalated correctly.
+
 ## Phase 1 — kind + Terraform (namespace, secrets, storage) — done
 
 Status: cluster is live, `terraform apply` is clean and idempotent, single control-plane node (deliberately — see note above). Storage: kind's default standard StorageClass (local-path-provisioner) is sufficient, no `kubernetes_storage_class` resource needed — documented in a comment in `main.tf`. Namespace `pingfederate` stays as-is; Phase 2's Postgres reuses this same namespace rather than a second one — also documented in `main.tf`. (Whether to split namespaces further per-component is an open question the user raised but hasn't confirmed yet — not acted on.) No further work needed for this phase.
