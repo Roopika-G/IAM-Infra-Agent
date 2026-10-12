@@ -13,11 +13,17 @@ pulled on demand via MCP tools, not pre-fetched speculatively here.
 """
 
 import os
+from pathlib import Path
 import time
 
 import psycopg
 
+from known_noise import is_known_startup_noise
 from signature import compute_signature
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")  # keys live in the repo-root .env (never overrides your shell)
 
 DB_DSN = os.environ.get(
     "AGENT_DB_DSN", "postgresql://postgres@localhost:5432/postgres"
@@ -64,6 +70,8 @@ def poll_once(conn: psycopg.Connection) -> int:
             logger = data.get("logger")
             exception_type = data.get("exceptionClassName")
             message = data.get("message", "")
+            if is_known_startup_noise(message):
+                continue                      # harmless PF startup message: not an incident (the cursor still advances)
 
             fingerprint = compute_signature(logger, exception_type, message)
 
@@ -73,7 +81,7 @@ def poll_once(conn: psycopg.Connection) -> int:
                     (fingerprint, log_type, pf_role, logger, exception_type,
                      sample_message, first_seen, last_seen, occurrence_count)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)
-                ON CONFLICT (fingerprint) WHERE status NOT IN ('RESOLVED', 'FAILED')
+                ON CONFLICT (fingerprint) WHERE status NOT IN ('RESOLVED', 'FAILED', 'ARCHIVED')
                 DO UPDATE SET
                     last_seen = GREATEST(agent.incidents.last_seen, EXCLUDED.last_seen),
                     occurrence_count = agent.incidents.occurrence_count + 1
