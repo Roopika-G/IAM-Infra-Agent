@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS agent.incidents (
     occurrence_count INTEGER NOT NULL DEFAULT 1
 );
 CREATE UNIQUE INDEX IF NOT EXISTS incidents_open_fingerprint_idx
-    ON agent.incidents (fingerprint) WHERE status NOT IN ('RESOLVED', 'FAILED');
+    ON agent.incidents (fingerprint) WHERE status NOT IN ('RESOLVED', 'FAILED', 'ARCHIVED');
 
 -- agent_knowledge: narrative/explanatory RAG content ONLY (invariants,
 -- traps, "why") — never exact config values, those don't belong in a
@@ -112,4 +112,33 @@ CREATE TABLE IF NOT EXISTS agent.config_baseline (
     source_file  TEXT NOT NULL,
     captured_sha TEXT NOT NULL,
     verified_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- agent.runs / agent.run_events: the full record of what the agent did.
+-- One run per agent invocation on an incident; one event per step, in order:
+-- every node, LLM call (what it was shown and what it answered, tokens, time),
+-- tool call (arguments, full result, time), evidence item, decision, policy
+-- check and outcome. Written as the run happens, so a crash still leaves a trail.
+CREATE TABLE IF NOT EXISTS agent.runs (
+    id          BIGSERIAL PRIMARY KEY,
+    incident_id BIGINT NOT NULL REFERENCES agent.incidents (id),
+    model       TEXT,
+    started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ,
+    status      TEXT NOT NULL DEFAULT 'RUNNING',   -- RUNNING, pr_opened, escalated, ERROR
+    outcome     JSONB,
+    error       TEXT
+);
+CREATE INDEX IF NOT EXISTS runs_incident_idx ON agent.runs (incident_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent.run_events (
+    id          BIGSERIAL PRIMARY KEY,
+    run_id      BIGINT NOT NULL REFERENCES agent.runs (id) ON DELETE CASCADE,
+    seq         INTEGER NOT NULL,
+    ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    node        TEXT NOT NULL,
+    kind        TEXT NOT NULL,        -- node_start, node_end, prompt, snapshot, llm_call, tool_call, evidence, decision, policy, outcome, error
+    duration_ms INTEGER,
+    data        JSONB NOT NULL,
+    UNIQUE (run_id, seq)
 );
