@@ -25,13 +25,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from agent import store
-from agent.attempts import MAX_ATTEMPTS, attempt_count
-from agent.intake import component_of, scan_drift
-from agent.runlog import RunLog
-from agent.settings import Settings
-from agent.toolbox import SERVER_SCRIPTS, ToolFailed, Toolbox
-from agent.tracing import run_span
+from agent.models import Settings
+from agent.records import MAX_ATTEMPTS, RunLog, attempt_count, latest_run, run_span, set_status
+from agent.tools import SERVER_SCRIPTS, ToolFailed, Toolbox, component_of, scan_drift
 
 # helm_deploy is deliberately NOT in toolbox.SERVER_SCRIPTS (what the agent's LLM run uses): only this module starts it.
 DEPLOY_SERVERS = {"helm_deploy": "mcp_servers/helm_deploy/server.py",
@@ -128,7 +124,7 @@ async def run_deploy(incident_id: int, settings: Settings | None = None) -> Depl
     """Deploy the merged fix for one incident. The incident must already be claimed (DEPLOYING)."""
     settings = settings or Settings.from_env()
     token = os.environ["HELM_DEPLOY_TOKEN"]
-    run_id, outcome = store.latest_run(incident_id)
+    run_id, outcome = latest_run(incident_id)
     log = RunLog.resume(run_id)
     try:
         commit = merge_commit(outcome["url"])
@@ -151,5 +147,5 @@ async def run_deploy(incident_id: int, settings: Settings | None = None) -> Depl
         log.event("error", {"error": repr(e)}, node="deploy")
     status = next_status(result, attempt_count(incident_id))
     log.event("deploy_result", {**result.model_dump(), "next_status": status}, node="deploy")
-    store.set_status(incident_id, status)
+    set_status(incident_id, status)
     return result

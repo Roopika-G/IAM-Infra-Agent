@@ -320,7 +320,7 @@ LLM is not given the deploy tool (see `agent/deploy.py`) and is only brought
 back after a failed check. Every attempt starts from a fresh branch off GitHub's
 `main`, and the agent reads `github/main` (what is on GitHub), not a local copy.
 PingFederate's known harmless startup warnings are not turned into incidents
-(`agent/known_noise.py`).
+(the list in `agent/signature.py`).
 
 Manual start, if you prefer terminals:
 
@@ -360,18 +360,16 @@ intake -> agent <-> tools -> decision -> policy -> apply_fix -> PR opened
 
 | File | What it is |
 |---|---|
-| `agent/schemas.py` | every data shape (Pydantic): incident, evidence, snapshot, decisions, policy result, graph state |
-| `agent/graph.py` | the graph: nodes and routing, read top to bottom |
-| `agent/intake.py` | takes the system snapshot (pods, drift scan, license and certificate days, replication, recent errors) |
+| `agent/graph.py` | the LangGraph graph: nodes and routing, read top to bottom |
+| `agent/models.py` | the Pydantic data shapes, settings, the decision tools the LLM ends with (`propose_repo_fix`, `escalate`), prompt loading, the chat model |
+| `agent/tools.py` | the MCP toolbox (the LLM gets read tools only) and the intake snapshot (pods, drift scan, license and certificate days, replication, recent errors) |
 | `agent/policy.py` | the policy check: 10 checks, run in order, first failure stops it |
-| `agent/decisions.py` | the decision tools the LLM ends with: `propose_repo_fix`, `escalate` |
-| `agent/toolbox.py` | connects to the MCP servers; the LLM gets read tools only |
-| `agent/prompts/` (3 files) | what the LLM reads: `system`, `trigger_message`, `forced_decision` |
+| `agent/records.py` | everything that touches Postgres: incidents and their status, earlier attempts, PR status, the run log, and optional Phoenix tracing |
+| `agent/worker.py` | the control loop: starts the agent for new Sim A incidents, waits on PRs, deploys merged ones; also runs the agent once on one incident |
+| `agent/deploy.py` | deploy a merged PR's commit, check it, then resolve, roll back or retry |
+| `agent/prompts/` (3 files) | what the LLM reads: `system`, `trigger_message`, `forced_decision` (plus `retry_context` for a retry) |
 | `agent/templates/` (2 files) | layouts code fills in: the GitHub issue (`escalation_report`) and the PR description (`pr_body`) |
-| `agent/prompt_loader.py` | loads and fills them by name |
-| `agent/trigger.py`, `agent/worker.py` | start the agent for new Sim A incidents |
-| `agent/run.py` | run the agent on one incident |
-| `agent/store.py`, `agent/llm.py`, `agent/settings.py` | incident table access, the chat model, settings |
+| `agent/detector.py`, `signature.py`, `embeddings.py` | the log detector, error fingerprints (and the list of harmless PF startup messages), local embeddings |
 
 Keys live in a repo-root `.env` (gitignored, mode 600). One-time setup:
 
@@ -396,7 +394,7 @@ uv run python -m agent.worker          # 2: starts the agent for each new Sim A 
 ./Error_Simulation/sim_a_jdbc_url.sh inject   # 3: commits + pushes a broken URL, redeploys
 ```
 
-or on an incident that already exists: `uv run python -m agent.run --incident 7`.
+or on an incident that already exists: `uv run python -m agent.worker --incident 7`.
 The agent opens a real branch and pull request (or a GitHub issue) on this repo.
 
 `uv run pytest` runs the whole suite (no API key or cluster needed). The agent

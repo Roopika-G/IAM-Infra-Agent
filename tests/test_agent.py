@@ -13,15 +13,13 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import StructuredTool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from agent import prompt_loader  # noqa: E402
+from agent import models  # noqa: E402
 from agent.graph import IamAgent  # noqa: E402
-from agent.intake import build_snapshot  # noqa: E402
 from agent.policy import run_policy  # noqa: E402
-from agent.runlog import NullRunLog  # noqa: E402
-from agent.schemas import AgentState, Change, Diagnosis, Incident, RepoFix  # noqa: E402
-from agent.settings import Settings  # noqa: E402
-from agent.toolbox import READ_TOOLS, ToolFailed, Toolbox, parse_result  # noqa: E402
-from agent.trigger import is_sim_a  # noqa: E402
+from agent.records import NullRunLog  # noqa: E402
+from agent.models import AgentState, Change, Diagnosis, Incident, RepoFix, Settings  # noqa: E402
+from agent.tools import READ_TOOLS, ToolFailed, Toolbox, build_snapshot, parse_result  # noqa: E402
+from agent.worker import is_sim_a  # noqa: E402
 
 GOLD = "jdbc:postgresql://postgres.pingfederate.svc.cluster.local:5432/postgres"
 BAD = "jdbc:postgresql://postgres-wrong-host.pingfederate.svc.cluster.local:5432/postgres"
@@ -305,12 +303,12 @@ def test_policy_passes_a_clean_fix_and_lists_all_ten_checks():
 
 def test_every_prompt_renders_and_a_missing_value_fails_loudly():
     values = {k: "x" for name in ("system", "trigger_message", "forced_decision", "escalation_report", "pr_body")
-              for k in prompt_loader.placeholders(name)}
+              for k in models.placeholders(name)}
     for name in ("system", "trigger_message", "forced_decision", "escalation_report", "pr_body"):
-        text = prompt_loader.render(name, **values)
+        text = models.render(name, **values)
         assert "{" not in text or name == "pr_body"      # pr_body holds a literal code fence only
     with pytest.raises(KeyError):
-        prompt_loader.render("system")
+        models.render("system")
 
 
 def test_only_sim_a_incidents_start_the_agent():
@@ -417,7 +415,7 @@ def test_a_crash_inside_a_node_is_logged_before_it_propagates():
 
 
 def test_a_database_failure_in_the_log_never_breaks_the_agent(capsys):
-    from agent.runlog import RunLog
+    from agent.records import RunLog
     log = RunLog(7, "m", dsn="postgresql://nobody@127.0.0.1:1/none?connect_timeout=1")   # unreachable
     log.event("evidence", {"x": 1})
     log.finish("escalated")
@@ -425,22 +423,22 @@ def test_a_database_failure_in_the_log_never_breaks_the_agent(capsys):
 
 
 def test_pr_sync_maps_what_github_says_to_an_incident_status(monkeypatch):
-    from agent import pr_sync
+    from agent import records
     calls = []
-    monkeypatch.setattr(pr_sync, "set_status", lambda i, s: calls.append((i, s)))
+    monkeypatch.setattr(records, "set_status", lambda i, s: calls.append((i, s)))
 
     class FakeConn:
         def __enter__(self): return self
         def __exit__(self, *a): return False
         def execute(self, *a, **k): return NS(fetchall=lambda: [(1, "u/1"), (2, "u/2"), (3, "u/3"), (4, None)])
-    monkeypatch.setattr(pr_sync.psycopg, "connect", lambda *a, **k: FakeConn())
+    monkeypatch.setattr(records.psycopg, "connect", lambda *a, **k: FakeConn())
     states = {"u/1": "MERGED", "u/2": "CLOSED", "u/3": "OPEN"}
-    changed = pr_sync.sync_pr_status(get_state=lambda url: states[url])
+    changed = records.sync_pr_status(get_state=lambda url: states[url])
     assert changed == [(1, "MERGED"), (2, "PR_REJECTED")] and calls == changed      # open PRs and missing urls are left alone
 
 
 def test_tracing_is_off_unless_asked_and_tool_spans_never_break_a_call(monkeypatch):
-    from agent import tracing
+    from agent import records as tracing
     monkeypatch.delenv("PHOENIX_COLLECTOR_ENDPOINT", raising=False)
     assert tracing.setup_tracing() is False
     with tracing.tool_span("some_tool", {"a": 1}) as record:      # no-op or real span: either way it must not raise
@@ -451,7 +449,7 @@ def test_tracing_is_off_unless_asked_and_tool_spans_never_break_a_call(monkeypat
 # ------------------------------------------------------------------ deploy after merge, and startup noise
 
 from agent import deploy  # noqa: E402
-from agent.known_noise import is_known_startup_noise  # noqa: E402
+from agent.signature import is_known_startup_noise  # noqa: E402
 
 READY_PODS = [{"pod": "pingfederate-pingfederate-admin-x", "phase": "Running", "ready": "2/2", "containers": [{"restart_count": 0}]},
               {"pod": "pingfederate-pingfederate-engine-y", "phase": "Running", "ready": "2/2", "containers": [{"restart_count": 0}]},
@@ -516,7 +514,7 @@ def test_pods_ready_needs_every_pod_running_and_fully_ready():
 
 
 def test_the_agents_own_toolbox_never_includes_the_deploy_server():
-    from agent.toolbox import SERVER_SCRIPTS
+    from agent.tools import SERVER_SCRIPTS
     assert "helm_deploy" not in SERVER_SCRIPTS and "helm_deploy" in deploy.DEPLOY_SERVERS
 
 
@@ -552,7 +550,7 @@ def test_after_a_deploy_the_incident_is_closed_retried_or_handed_to_a_human(depl
 
 
 def test_a_retry_tells_the_agent_what_the_earlier_attempt_did_and_how_it_failed():
-    from agent.attempts import render_notes
+    from agent.records import render_notes
     notes = render_notes([
         {"n": 1, "changes": [(ADMIN_KEY, GOLD)], "pr_url": "https://github.com/x/y/pull/1", "deploy_status": "rolled_back", "deploy_detail": "2 key(s) still differ"},
         {"n": 2, "changes": [], "pr_url": None, "deploy_status": None, "deploy_detail": None},      # no known result: skipped
@@ -576,7 +574,7 @@ def test_a_retry_note_reaches_the_llm_as_part_of_its_first_messages():
 def test_every_attempt_starts_from_a_fresh_branch(tmp_path):
     """prepare_attempt discards a leftover worktree and branch (from a merged earlier attempt)."""
     import subprocess
-    from agent import gitwork
+    from agent import worker
     def git(*a, cwd):
         return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True, check=True).stdout
     remote, work = tmp_path / "remote.git", tmp_path / "work"
@@ -589,6 +587,6 @@ def test_every_attempt_starts_from_a_fresh_branch(tmp_path):
     (work / ".worktrees").mkdir()
     git("worktree", "add", "-b", "remediation/inc-5", str(work / ".worktrees" / "inc-5"), "main", cwd=work)
     assert (work / ".worktrees" / "inc-5").exists() and "remediation/inc-5" in git("branch", cwd=work)
-    gitwork.prepare_attempt(5, root=work)
+    worker.prepare_attempt(5, root=work)
     assert not (work / ".worktrees" / "inc-5").exists() and "remediation/inc-5" not in git("branch", cwd=work)
-    gitwork.prepare_attempt(5, root=work)         # and it is harmless when there is nothing left to clean
+    worker.prepare_attempt(5, root=work)         # and it is harmless when there is nothing left to clean

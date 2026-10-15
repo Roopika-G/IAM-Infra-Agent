@@ -18,8 +18,7 @@ import time
 
 import psycopg
 
-from known_noise import is_known_startup_noise
-from signature import compute_signature
+from signature import compute_signature, is_known_startup_noise
 
 from dotenv import load_dotenv
 

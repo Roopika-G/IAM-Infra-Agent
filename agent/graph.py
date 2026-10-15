@@ -19,14 +19,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
-from agent import prompt_loader
-from agent.decisions import DECISION_NAMES, DECISION_TOOLS, parse_decision
-from agent.intake import build_snapshot, format_evidence
+from agent.models import (DECISION_NAMES, DECISION_TOOLS, AgentState, Diagnosis, Escalation, Evidence, Outcome, RepoFix, Settings,
+                          parse_decision, render)
 from agent.policy import run_policy
-from agent.runlog import NullRunLog, message_record
-from agent.schemas import AgentState, Diagnosis, Escalation, Evidence, Outcome, RepoFix
-from agent.settings import Settings
-from agent.toolbox import ToolFailed
+from agent.records import NullRunLog, message_record
+from agent.tools import ToolFailed, build_snapshot, format_evidence
 
 EXTRA_TURNS = 5   # LLM turns allowed beyond the tool budget before we give up
 
@@ -35,7 +32,7 @@ class IamAgent:
     def __init__(self, tools, llm, settings: Settings, log=None):
         self.tools = tools                  # Toolbox, or anything with call() and read_tools()
         self.settings = settings
-        self.log = log or NullRunLog()      # records every step (agent/runlog.py)
+        self.log = log or NullRunLog()      # records every step (agent/records.py)
         self.tools.on_call = self.log.tool_call
         self.read_tools = {t.name: t for t in tools.read_tools()}
         self.llm = llm.bind_tools(list(self.read_tools.values()) + DECISION_TOOLS)
@@ -45,13 +42,13 @@ class IamAgent:
 
     async def intake(self, state: AgentState) -> dict:
         snapshot, evidence = await build_snapshot(self.tools, state.incident, self.settings.evidence_chars)
-        first = prompt_loader.render(
+        first = render(
             "trigger_message",
             incident_id=state.incident.id, trigger_type="log", trigger_payload=state.incident.sample_message,
             snapshot_time=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             snapshot_summary=snapshot.summary(), evidence_list=format_evidence(evidence),
         )
-        system = prompt_loader.render("system", max_steps=self.settings.max_steps)
+        system = render("system", max_steps=self.settings.max_steps)
         self.log.event("snapshot", snapshot.model_dump())
         for e in evidence:
             self.log.event("evidence", e.model_dump())
@@ -64,7 +61,7 @@ class IamAgent:
         out_of_budget = state.steps_used >= self.settings.max_steps
         added = []
         if out_of_budget and not any(isinstance(m, HumanMessage) and "may no longer call read tools" in str(m.content) for m in state.messages):
-            added.append(HumanMessage(prompt_loader.render("forced_decision", max_steps=self.settings.max_steps)))
+            added.append(HumanMessage(render("forced_decision", max_steps=self.settings.max_steps)))
         llm = self.llm_must_decide if out_of_budget else self.llm
         shown = list(state.messages[self.log.logged_messages:]) + added      # what the model has not been shown before
         started = time.monotonic()
@@ -143,18 +140,18 @@ class IamAgent:
                 patched = await self.tools.call("patch_helm_values", {
                     "key_path": change.key_path, "new_value": change.new_value, "expected_file_sha256": sha, "incident_id": iid})
                 sha = patched["new_file_sha256"]
-            render = await self.tools.call("helm_render_validate", {"incident_id": iid})
-            if not render["valid"]:
-                return {"decision": _refused(fix, f"The Helm render check failed: {render['errors']}")}
+            check = await self.tools.call("helm_render_validate", {"incident_id": iid})
+            if not check["valid"]:
+                return {"decision": _refused(fix, f"The Helm render check failed: {check['errors']}")}
             await self.tools.call("push_remediation_branch", {"incident_id": iid})
-            body = prompt_loader.render(
+            body = render(
                 "pr_body", root_cause=fix.diagnosis.root_cause, confidence=fix.diagnosis.confidence.value,
                 evidence="\n".join(f"- {e.id} {e.tool}: {e.summary}" for e in state.evidence if e.id in fix.diagnosis.evidence_ids),
-                diff=patched["unified_diff"], render_check=f"valid. {render['patch_changed_lines']} rendered line(s) change.",
+                diff=patched["unified_diff"], render_check=f"valid. {check['patch_changed_lines']} rendered line(s) change.",
                 error=state.incident.sample_message)
             pr = await self.tools.call("create_pull_request", {
                 "incident_id": iid, "title": f"Fix incident #{iid}: {fix.diagnosis.root_cause[:90]}", "body": body})
-            await self.tools.call("add_pr_comment", {"pr_number": pr["number"], "body": "Helm render diff for this change:\n\n```diff\n" + render["rendered_diff"] + "\n```"})
+            await self.tools.call("add_pr_comment", {"pr_number": pr["number"], "body": "Helm render diff for this change:\n\n```diff\n" + check["rendered_diff"] + "\n```"})
         except ToolFailed as e:
             return {"decision": _refused(fix, f"Applying the fix failed: {e}")}
         outcome = Outcome(kind="pr_opened", url=pr["url"], detail=f"PR #{pr['number']} opened for a human to review")
@@ -163,7 +160,7 @@ class IamAgent:
 
     async def escalate(self, state: AgentState) -> dict:
         d: Escalation = state.decision
-        report = prompt_loader.render(
+        report = render(
             "escalation_report", id=state.incident.id, title=d.diagnosis.root_cause[:80], trigger=state.incident.sample_message,
             checked="\n".join(f"- {c}" for c in d.checked) or "- (nothing recorded)",
             found=d.diagnosis.root_cause, confidence=d.diagnosis.confidence.value,

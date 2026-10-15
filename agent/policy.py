@@ -14,7 +14,7 @@ import re
 
 from mcp_servers import common
 
-from agent.schemas import CheckResult, Confidence, Escalation, Incident, PolicyResult, RepoFix
+from agent.models import CheckResult, Confidence, Escalation, Incident, PolicyResult, RepoFix
 
 NAMES = {
     1: "Path allowed", 2: "Key is not secret-looking", 3: "New value is a known-good value", 4: "Change is small",
