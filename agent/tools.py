@@ -5,7 +5,7 @@ only; code can call any tool) and the intake snapshot built from them.
 import json
 import sys
 import time
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, nullcontext
 from typing import Any
 
 from langchain_core.tools import StructuredTool
@@ -86,13 +86,14 @@ class Toolbox:
     async def __aexit__(self, *exc) -> None:
         await self._stack.aclose()
 
-    async def call(self, name: str, args: dict | None = None, timeout: float | None = None) -> Any:
+    async def call(self, name: str, args: dict | None = None, timeout: float | None = None, traced: bool = True) -> Any:
         """Call any tool by name and return the parsed result. Raises ToolFailed. timeout is in seconds.
 
         Every call, from the LLM or from code, is reported to on_call."""
         args = args or {}
         start = time.monotonic()
-        with tool_span(name, args) as record:
+        # Tools the LLM picks already get a Phoenix span from LangChain; only code-run calls need our own.
+        with (tool_span(name, args) if traced else nullcontext(lambda result, error: None)) as record:
             try:
                 session = self._session_of.get(name)
                 if session is None:
@@ -118,7 +119,7 @@ class Toolbox:
         for name in sorted(READ_TOOLS & self._tools.keys()):
             async def run(_name=name, **kwargs) -> str:
                 try:
-                    value = await self.call(_name, kwargs)
+                    value = await self.call(_name, kwargs, traced=False)
                 except ToolFailed as e:
                     return f"ERROR: {e}"
                 text = value if isinstance(value, str) else json.dumps(value, default=str)
@@ -148,7 +149,7 @@ def drift_state(golden: str, live: str | None) -> str:
 
 async def _try(tools, name: str, args: dict, unavailable: list[str]):
     try:
-        return await tools.call(name, args)
+        return await tools.call(name, args, traced=False)     # intake shows as one Phoenix row; the detail is in the Postgres record
     except ToolFailed as e:
         unavailable.append(f"{name} ({str(e)[:80]})")
         return None

@@ -231,19 +231,43 @@ def message_record(message) -> dict:
 
 # ---- Phoenix tracing (off unless PHOENIX_COLLECTOR_ENDPOINT is set) --------
 
+# Spans that are framework plumbing, not something the agent did. Dropped so a run shows only the steps.
+_NOISE_PREFIXES = ("MCP send", "after_")
+
+
 def setup_tracing() -> bool:
     """Start sending traces to Phoenix. Call once per process, before the agent runs."""
     endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT")
     if not endpoint:
         return False
     try:
-        from phoenix.otel import register
+        from openinference.instrumentation.langchain import LangChainInstrumentor
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import SpanProcessor
+        from phoenix.otel import HTTPSpanExporter, Resource, SimpleSpanProcessor, TracerProvider
     except ImportError:
         print("tracing: Phoenix is not installed (uv sync --extra tracing); running without it", file=sys.stderr)
         return False
-    # batch=False exports each span as soon as it ends, so the view is close to live.
-    register(project_name=os.environ.get("PHOENIX_PROJECT", "iam-agent"), endpoint=endpoint.rstrip("/") + "/v1/traces",
-             auto_instrument=True, verbose=False)
+
+    class DropPlumbing(SpanProcessor):
+        """Passes every span to the exporter except the plumbing ones."""
+        def __init__(self, inner):
+            self.inner = inner
+        def on_start(self, span, parent_context=None):
+            self.inner.on_start(span, parent_context)
+        def on_end(self, span):
+            if not span.name.startswith(_NOISE_PREFIXES):
+                self.inner.on_end(span)
+        def shutdown(self):
+            self.inner.shutdown()
+        def force_flush(self, timeout_millis=30000):
+            return self.inner.force_flush(timeout_millis)
+
+    provider = TracerProvider(resource=Resource({"openinference.project.name": os.environ.get("PHOENIX_PROJECT", "iam-agent")}))
+    # SimpleSpanProcessor exports each span as soon as it ends, so the view is close to live.
+    provider.add_span_processor(DropPlumbing(SimpleSpanProcessor(HTTPSpanExporter(endpoint=endpoint.rstrip("/") + "/v1/traces"))))
+    trace.set_tracer_provider(provider)
+    LangChainInstrumentor().instrument(tracer_provider=provider)   # the graph, the LLM calls and the tools the model picks
     return True
 
 
