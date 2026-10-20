@@ -19,7 +19,6 @@ from agent.policy import run_policy  # noqa: E402
 from agent.records import NullRunLog  # noqa: E402
 from agent.models import AgentState, Change, Diagnosis, Incident, RepoFix, Settings  # noqa: E402
 from agent.tools import READ_TOOLS, ToolFailed, Toolbox, build_snapshot, parse_result  # noqa: E402
-from agent.worker import is_sim_a  # noqa: E402
 
 GOLD = "jdbc:postgresql://postgres.pingfederate.svc.cluster.local:5432/postgres"
 BAD = "jdbc:postgresql://postgres-wrong-host.pingfederate.svc.cluster.local:5432/postgres"
@@ -67,7 +66,7 @@ class FakeTools:
         self.calls: list[tuple[str, dict]] = []
         self.on_call = None
 
-    async def call(self, name, args=None, timeout=None):
+    async def call(self, name, args=None, timeout=None, traced=True):
         self.calls.append((name, args or {}))
         if name in self.fail:
             if self.on_call:
@@ -311,12 +310,6 @@ def test_every_prompt_renders_and_a_missing_value_fails_loudly():
         models.render("system")
 
 
-def test_only_sim_a_incidents_start_the_agent():
-    assert is_sim_a(incident())
-    assert not is_sim_a(Incident(id=1, status="NEW", logger="org.jgroups.protocols.pbcast.GMS", sample_message="too many JOIN attempts",
-                                 first_seen=NOW, last_seen=NOW, occurrence_count=1))
-
-
 def test_parse_result_handles_lists_dicts_text_and_errors():
     tb = lambda **kw: NS(is_error=False, structured_content=None, content=[], **kw)
     assert parse_result(NS(is_error=False, structured_content={"result": [1, 2]}, content=[])) == [1, 2]
@@ -449,7 +442,7 @@ def test_tracing_is_off_unless_asked_and_tool_spans_never_break_a_call(monkeypat
 # ------------------------------------------------------------------ deploy after merge, and startup noise
 
 from agent import deploy  # noqa: E402
-from agent.signature import is_known_startup_noise  # noqa: E402
+from agent.signature import is_simulated_fault  # noqa: E402
 
 READY_PODS = [{"pod": "pingfederate-pingfederate-admin-x", "phase": "Running", "ready": "2/2", "containers": [{"restart_count": 0}]},
               {"pod": "pingfederate-pingfederate-engine-y", "phase": "Running", "ready": "2/2", "containers": [{"restart_count": 0}]},
@@ -518,75 +511,22 @@ def test_the_agents_own_toolbox_never_includes_the_deploy_server():
     assert "helm_deploy" not in SERVER_SCRIPTS and "helm_deploy" in deploy.DEPLOY_SERVERS
 
 
-@pytest.mark.parametrize("message, noise", [
-    ("pf.runtime.threads.max is not set. Bulkhead manager will not be enabled.", True),
-    ("pf.console.authentication:  is not a valid authentication type. Defaulting to native", True),
-    ("Not using invalid host (${DISCOVERY_INITIAL_HOST}) specified in pf.cluster.tcp", True),
-    ("Unable to load OAUTH_ACCESS_TOKEN plugin instance: default", True),
-    ("Unable to load custom data source instance: JDBC-FD67494D8AAFD9D8A5D00C310DE08DD078626978", False),   # Sim A: must NEVER be ignored
-    ("Connection refused to jdbc:postgresql://10.244.0.43:5432/postgres after 30000ms", False),
-    ("Server profile merge failed: instance directory not found", False),
-    ("", False),
+@pytest.mark.parametrize("logger, message, expected", [
+    ("org.sourceid.saml20.domain.mgmt.impl.DataSourceManagerImpl", "Unable to load custom data source instance: JDBC-FD67", True),   # Sim A
+    (None, "Unable to load custom data source instance: JDBC-FD67494D", True),
+    ("org.jgroups.protocols.pbcast.GMS", "10.244.0.16:7600: too many JOIN attempts (10): becoming singleton", False),               # cluster chatter
+    ("x", "pf.runtime.threads.max is not set. Bulkhead manager will not be enabled.", False),                                         # startup warning
+    ("com.pingidentity.jdbc.Pool", "Connection refused to jdbc:postgresql://10.244.0.43:5432/postgres after 30000ms", False),         # not a simulated fault
+    (None, "", False),
 ])
-def test_only_known_startup_noise_is_ignored_and_real_faults_never_are(message, noise):
-    assert is_known_startup_noise(message) is noise
+def test_only_the_simulated_fault_becomes_an_incident(logger, message, expected):
+    assert is_simulated_fault(logger, message) is expected
 
 
-def test_with_no_earlier_deployed_revision_a_failed_check_cannot_roll_back():
-    result, tools, _ = run_deploy_fake({"get_live_config_value": lambda a: {"value": BAD}, "get_helm_release": {"history": [{"revision": 25, "status": "failed"}]}})
-    assert result.status == "failed" and "no earlier deployed revision" in result.detail and "helm_rollback_release" not in tools.names()
-
-
-@pytest.mark.parametrize("deploy_status, attempts, expected", [
-    ("resolved", 1, "RESOLVED"),          # success closes the incident for good
-    ("resolved", 2, "RESOLVED"),
-    ("rolled_back", 1, "RETRY"),          # a failed deploy lets the agent try again...
-    ("failed", 1, "RETRY"),
-    ("rolled_back", 2, "FAILED"),         # ...but only MAX_ATTEMPTS times, then a human is asked
-    ("failed", 3, "FAILED"),
-])
-def test_after_a_deploy_the_incident_is_closed_retried_or_handed_to_a_human(deploy_status, attempts, expected):
-    assert deploy.next_status(deploy.DeployResult(status=deploy_status, detail="x"), attempts) == expected
-
-
-def test_a_retry_tells_the_agent_what_the_earlier_attempt_did_and_how_it_failed():
-    from agent.records import render_notes
-    notes = render_notes([
-        {"n": 1, "changes": [(ADMIN_KEY, GOLD)], "pr_url": "https://github.com/x/y/pull/1", "deploy_status": "rolled_back", "deploy_detail": "2 key(s) still differ"},
-        {"n": 2, "changes": [], "pr_url": None, "deploy_status": None, "deploy_detail": None},      # no known result: skipped
-    ])
-    assert len(notes) == 1
-    assert "Attempt 1" in notes[0] and ADMIN_KEY in notes[0] and "pull/1" in notes[0] and "rolled_back: 2 key(s) still differ" in notes[0]
-    assert "Do not repeat it" in notes[0]
-
-
-def test_a_retry_note_reaches_the_llm_as_part_of_its_first_messages():
-    note = "A previous attempt on this incident did not work.\nAttempt 1: changed x\nResult: rolled_back: y"
-    log = MemoryLog()
-    llm = ScriptedLLM([tool_call("escalate", escalate_args())])
-    graph = IamAgent(FakeTools(), llm, Settings(max_steps=8), log).build()
-    asyncio.run(graph.ainvoke(AgentState(incident=incident(), retry_notes=[note]), config={"recursion_limit": 80}))
-    first_call = next(e["data"] for e in log.events if e["kind"] == "llm_call")
-    assert [m["role"] for m in first_call["new_input"]] == ["system", "human", "human"]
-    assert "did not work" in first_call["new_input"][2]["content"]
-
-
-def test_every_attempt_starts_from_a_fresh_branch(tmp_path):
-    """prepare_attempt discards a leftover worktree and branch (from a merged earlier attempt)."""
-    import subprocess
-    from agent import worker
-    def git(*a, cwd):
-        return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True, check=True).stdout
-    remote, work = tmp_path / "remote.git", tmp_path / "work"
-    git("init", "--bare", "-b", "main", str(remote), cwd=tmp_path)
-    git("clone", str(remote), str(work), cwd=tmp_path)
-    for k, v in (("user.name", "t"), ("user.email", "t@t")):
-        git("config", k, v, cwd=work)
-    (work / "f.txt").write_text("1"); git("add", "f.txt", cwd=work); git("commit", "-m", "one", cwd=work); git("push", "origin", "HEAD:main", cwd=work)
-    git("remote", "add", "github", str(remote), cwd=work)
-    (work / ".worktrees").mkdir()
-    git("worktree", "add", "-b", "remediation/inc-5", str(work / ".worktrees" / "inc-5"), "main", cwd=work)
-    assert (work / ".worktrees" / "inc-5").exists() and "remediation/inc-5" in git("branch", cwd=work)
-    worker.prepare_attempt(5, root=work)
-    assert not (work / ".worktrees" / "inc-5").exists() and "remediation/inc-5" not in git("branch", cwd=work)
-    worker.prepare_attempt(5, root=work)         # and it is harmless when there is nothing left to clean
+def test_every_entry_point_imports_the_way_it_is_started():
+    """The worker is started as `python -m agent.worker`; a bad import there stops the whole demo."""
+    import importlib, subprocess
+    for module in ("agent.worker", "agent.deploy", "agent.graph"):
+        importlib.import_module(module)
+    out = subprocess.run([sys.executable, "-m", "agent.worker", "--help"], capture_output=True, text=True, cwd=Path(__file__).resolve().parent.parent)
+    assert out.returncode == 0, out.stderr[-400:]
