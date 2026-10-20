@@ -149,6 +149,23 @@ def open_counts_by_role() -> dict[str, int]:
     return {role: n for role, n in rows}
 
 
+def timeline() -> dict:
+    """The story of the current simulated incident (the newest one that is not archived)."""
+    from ui.timeline import build_timeline
+    with psycopg.connect(DB_DSN) as conn:
+        row = conn.execute(f"SELECT {_INCIDENT_COLS} FROM agent.incidents i WHERE i.status <> 'ARCHIVED' ORDER BY i.id DESC LIMIT 1").fetchone()
+        incident, runs = (dict(zip(_INCIDENT_KEYS, row)) if row else None), []
+        if incident:
+            for rid, model, started, status, outcome, error in conn.execute(
+                    "SELECT id, model, started_at, status, outcome, error FROM agent.runs WHERE incident_id = %s ORDER BY started_at", (incident["id"],)).fetchall():
+                events = conn.execute("SELECT ts, node, kind, data FROM agent.run_events WHERE run_id = %s ORDER BY seq", (rid,)).fetchall()
+                runs.append({"started_at": started, "model": model, "status": status, "outcome": outcome, "error": error,
+                             "events": [{"ts": ts, "node": n, "kind": k, "data": d} for ts, n, k, d in events]})
+    waiting = incident is None and sim_a_state() == "corrupted"
+    return {"incident": ({"id": incident["id"], "status": incident["status"]} if incident else None),
+            "steps": build_timeline(incident, runs, waiting)}
+
+
 # --- fleet -------------------------------------------------------------
 
 def _component_of(pod_name: str) -> str | None:

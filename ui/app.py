@@ -45,6 +45,11 @@ def incident(incident_id: int):
     return found
 
 
+@app.get("/api/timeline")
+def timeline():
+    return data.timeline()
+
+
 @app.get("/api/activity")
 def activity():
     return data.activity()

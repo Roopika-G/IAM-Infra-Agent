@@ -86,6 +86,19 @@ export interface Activity {
   url?: string | null
 }
 
+export interface TimelineStep {
+  time: string | null
+  title: string
+  detail: string
+  state: 'done' | 'active' | 'pending' | 'bad'
+  url: string | null
+}
+
+export interface Timeline {
+  incident: { id: number; status: string } | null
+  steps: TimelineStep[]
+}
+
 export interface RemediationPr {
   number: number
   title: string
@@ -140,6 +153,9 @@ export const useActivity = () =>
 
 export const useConfig = () =>
   useQuery({ queryKey: ['config'], queryFn: () => getJson<{ phoenix_url: string }>('/api/config'), staleTime: Infinity })
+
+export const useTimeline = () =>
+  useQuery({ queryKey: ['timeline'], queryFn: () => getJson<Timeline>('/api/timeline'), refetchInterval: 3_000 })
 
 export const useApprovals = () =>
   useQuery({ queryKey: ['approvals'], queryFn: () => getJson<Approvals>('/api/approvals'), refetchInterval: 30_000 })

@@ -1,8 +1,7 @@
 import { NavLink, Route, Routes } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
+import History from './pages/History'
 import IncidentDetail from './pages/IncidentDetail'
-import Approvals from './pages/Approvals'
-import Simulations from './pages/Simulations'
 
 export default function App() {
   return (
@@ -13,16 +12,14 @@ export default function App() {
           <div className="brand-sub">kind-self-healing-iam</div>
         </div>
         <NavLink to="/" end>Dashboard</NavLink>
-        <NavLink to="/approvals">Approvals</NavLink>
-        <NavLink to="/simulations">Simulations</NavLink>
+        <NavLink to="/history">History</NavLink>
         <div className="sidebar-foot">localhost only, no auth</div>
       </nav>
       <main className="content">
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/history" element={<History />} />
           <Route path="/incidents/:id" element={<IncidentDetail />} />
-          <Route path="/approvals" element={<Approvals />} />
-          <Route path="/simulations" element={<Simulations />} />
           <Route path="*" element={<p className="muted">Page not found.</p>} />
         </Routes>
       </main>
