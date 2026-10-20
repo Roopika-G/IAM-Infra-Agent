@@ -26,16 +26,11 @@ from agent.records import (RunLog, claim_merged, claim_new, load_incident, retry
                            setup_tracing, sync_pr_status)
 from agent.tools import Toolbox
 from mcp_servers import common
+from agent.signature import is_simulated_fault
 
 POLL_SECONDS = 10
 PR_SYNC_SECONDS = 15
 STATUS_FOR = {"pr_opened": "WAITING_FOR_PR_REVIEW", "escalated": "ESCALATED"}
-
-
-def is_sim_a(incident: Incident) -> bool:
-    """The only fault that starts the agent: PingFederate cannot load its JDBC datastore.
-    Widening this one function is how later issues are switched on; the graph does not change."""
-    return (incident.logger or "").endswith("DataSourceManagerImpl") or "data source instance" in incident.sample_message.lower()
 
 
 def prepare_attempt(incident_id: int, root=common.REPO_ROOT) -> None:
@@ -85,7 +80,7 @@ def watch(settings: Settings) -> None:
             for incident_id, status in sync_pr_status():
                 print(f"worker: incident #{incident_id} -> {status}")
         merged = claim_merged() if can_deploy else None   # a merged PR is the human approval: deploy it (plain code, no LLM)
-        incident = None if merged else claim_new(is_sim_a)
+        incident = None if merged else claim_new(lambda i: is_simulated_fault(i.logger, i.sample_message))
         try:
             if merged:
                 print(f"worker: deploying the merged fix for incident #{merged}")

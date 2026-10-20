@@ -18,7 +18,7 @@ import time
 
 import psycopg
 
-from signature import compute_signature, is_known_startup_noise
+from signature import compute_signature, is_simulated_fault
 
 from dotenv import load_dotenv
 
@@ -69,8 +69,8 @@ def poll_once(conn: psycopg.Connection) -> int:
             logger = data.get("logger")
             exception_type = data.get("exceptionClassName")
             message = data.get("message", "")
-            if is_known_startup_noise(message):
-                continue                      # harmless PF startup message: not an incident (the cursor still advances)
+            if not is_simulated_fault(logger, message):
+                continue                      # not a simulated fault: ignored (the cursor still advances)
 
             fingerprint = compute_signature(logger, exception_type, message)
 

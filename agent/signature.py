@@ -51,23 +51,12 @@ def compute_signature(logger: str | None, exception_type: str | None, message: s
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
 
 
-# --- PingFederate's known harmless startup messages ---------------------------------
+# --- Which errors become incidents ---------------------------------------------------
 #
-# PF logs these as WARN or ERROR at every startup of a healthy cluster. Turning each into an
-# incident after every restart would bury real faults, so the detector skips them. Keep this
-# list short and specific; a real fault (e.g. "Unable to load custom data source instance")
-# must never be added.
+# Only the simulated fault does. Everything else PingFederate logs (startup warnings, cluster
+# chatter, ...) is ignored, so the UI and the agent only ever see the simulation. To add a
+# simulated issue, add its signature here; nothing else changes.
 
-KNOWN_STARTUP_NOISE = [
-    r"^pf\.runtime\.threads\.max is not set",
-    r"^pf\.console\.authentication: .* is not a valid authentication type",
-    r"^Channel already has an up handler installed",
-    r"^Not using invalid host \(\$\{DISCOVERY_INITIAL_HOST\}\)",
-    r"^Cluster encryption disabled and no value specified for the pf\.cluster\.auth\.pwd",
-    r"^Unable to load OAUTH_ACCESS_TOKEN plugin instance: default",
-]
-_COMPILED = [re.compile(p) for p in KNOWN_STARTUP_NOISE]
-
-
-def is_known_startup_noise(message: str) -> bool:
-    return any(p.search(message or "") for p in _COMPILED)
+def is_simulated_fault(logger: str | None, message: str | None) -> bool:
+    """Sim A: PingFederate cannot load its JDBC datastore."""
+    return (logger or "").endswith("DataSourceManagerImpl") or "data source instance" in (message or "").lower()

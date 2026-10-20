@@ -12,7 +12,6 @@ HOW TO WORK
 
 HOW TO FINISH. Call exactly ONE decision tool:
 - propose_repo_fix: the fix is a change to a file in the repo (values.yaml or the server profile).
-- request_runtime_action: no file change fixes it; a one-off action on the running system does (restart, scale, renew). Give the exact command.
 - escalate: a human must handle it, or you cannot determine the cause. ALWAYS escalate for secrets (passwords, keys), licenses, and certificate private material.
 Every decision needs: root_cause, confidence (high / medium / low), evidence_ids, and a short explanation a human reviewer can follow without re-doing your work.
 
